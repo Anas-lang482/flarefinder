@@ -39,12 +39,16 @@ regions:
     name: Saudi Arabia
     tier: core
     bbox: [34.5, 16.0, 55.7, 32.2]
-    # !! The EOG workbook does NOT use standard ISO3 here. Verified against
-    # the 2024 file on 2026-08-31: Saudi rows carry SAUCROP, plus SAUKWTNZ
-    # for the Saudi-Kuwait Neutral Zone. Filtering on "SAU" returns ZERO
-    # rows -- which would silently empty the held-out test region.
-    # Always join on these codes, never on the region `code` above.
-    eog_iso_codes: [SAUCROP, SAUKWTNZ]
+    # !! The EOG code for Saudi Arabia is NOT STABLE ACROSS YEARS. Verified
+    # against all nine workbooks on 2026-08-31:
+    #   2012-2023 -> SAU        (standard ISO3)
+    #   2024      -> SAUCROP    (changed, reason unknown)
+    #   all years -> SAUKWTNZ   (Saudi-Kuwait Neutral Zone, separate entity)
+    # Listing only the 2024 code silently drops twelve years of Saudi data;
+    # listing only "SAU" silently drops 2024. Both failures are quiet, and
+    # both would corrupt the held-out test region. All three are required.
+    # Any future year must be re-checked, not assumed.
+    eog_iso_codes: [SAU, SAUCROP, SAUKWTNZ]
   - code: IRQ
     name: Iraq
     tier: core
@@ -198,6 +202,15 @@ thresholds:
     # Radius for joining a detection to an EOG catalogue site.
     match_radius_m: 500           # [CHOICE] ~25 Sentinel-2 pixels. Sensitive
                                   # parameter — run a sensitivity sweep on it.
+    # Radius for reconciling the SAME physical flare across years. EOG
+    # re-issues site ids annually and the coordinates jitter, because they
+    # come from clustered detections rather than surveyed positions.
+    # Complete-linkage clustering, so no cluster exceeds this diameter.
+    cross_year_cluster_radius_m: 750   # [CHOICE] from the build spec. Verify
+                                       # against the printed cluster-extent
+                                       # diagnostic and sweep it: too large
+                                       # fuses neighbouring flares, too small
+                                       # splits one flare into several ids.
 
 # ---------------------------------------------------------------------------
 # EVALUATION (RULES 1, 2, 3)

@@ -27,9 +27,10 @@ import sys
 STAGES = {
     "check-env": ("src.check_env", "Verify every dependency imports and Earth Engine authenticates."),
     "download": ("src.data_eog", "Fetch EOG catalogue, VIIRS/Black Marble passes, Sentinel-2 scenes."),
-    "join": ("src.data_eog", "Match detections to EOG sites and assemble the site-year table."),
+    "join": ("src.build_catalog", "Cluster sites across years into stable ids; build catalog.parquet."),
     "features": ("src.features", "Build fusion features, including temporal intermittency."),
     "splits": ("src.splits", "Build by-site/year/region holdouts and run the confound diagnostic."),
+    "figures": ("src.figures", "Render publication figures (fig01 flare map: PNG, PDF, HTML)."),
     "baseline": ("src.baseline", "RULE 6: reproduce the standard VIIRS calibration and measure its bias."),
     "train": ("src.model_volume", "Fit detection and volume models on the training split only."),
     "evaluate": ("src.evaluate", "Per-size-bin metrics with bootstrap CIs on held-out sites/years/regions."),
@@ -73,6 +74,16 @@ def main(argv: list[str] | None = None) -> int:
         from src import data_eog
 
         return data_eog.main(args.config)
+
+    if args.stage == "join":
+        from src import build_catalog
+
+        return build_catalog.main(args.config)
+
+    if args.stage == "figures":
+        from src import figures
+
+        return figures.main(args.config)
 
     if args.stage == "splits":
         from src import splits
