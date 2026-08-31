@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Raw data: large, immutable, re-downloadable. Never commit.
+data/raw/*
+!data/raw/.gitkeep
+
+# Derived tables: rebuildable by the pipeline.
+data/processed/*
+!data/processed/.gitkeep
+
+# Trained models: large binaries.
+models/*
+!models/.gitkeep
+
+# Credentials. Never commit.
+.env
+*.pem
+*.json.key
+.config/earthengine/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Project archives / backups. Never commit -- these contain .venv and would
+# put hundreds of MB of binaries permanently into git history.
+*.zip
+*.7z
+*.tar.gz

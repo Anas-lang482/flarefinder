@@ -1,0 +1,1 @@
+"""FlareFinder pipeline package."""

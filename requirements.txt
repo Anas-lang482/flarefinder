@@ -1,0 +1,57 @@
+# FlareFinder dependencies. Python 3.11+ (developed on 3.12).
+#
+# Lower bounds, not exact pins: pins would go stale over an 8-week project
+# and pip would start refusing to solve. Once results are final, freeze the
+# resolved versions with:  pip freeze > requirements.lock.txt
+# and cite the lockfile in the write-up. Reproducibility (RULE 7) means the
+# lockfile, not this file.
+
+# --- core numerics / tables ---
+numpy>=1.26
+pandas>=2.2
+pyarrow>=15.0          # parquet engine for data/processed
+pyyaml>=6.0            # config.yaml loader
+
+# --- geospatial ---
+geopandas>=1.0
+shapely>=2.0
+pyproj>=3.6
+
+# rasterio: DELIBERATELY NOT INSTALLED.
+# Two reasons, in order of importance:
+#  1. We do not currently need it. Sentinel-2 is read through Earth Engine
+#     server-side reductions over site buffers, which return tables, not
+#     rasters. EOG catalogue and VNF files are CSV. Nothing in the planned
+#     pipeline opens a GeoTIFF locally.
+#  2. On this machine, Windows Application Control blocks rasterio's
+#     unsigned native DLL (ImportError: DLL load failed ... blocked by an
+#     Application Control policy). Disabling that protection to satisfy an
+#     unused dependency is a bad trade.
+# If we later download imagery chips (only if RULE 5 justifies a CNN), or if
+# the Black Marble S3 product turns out to be GeoTIFF rather than tabular,
+# revisit this. src/check_env.py reports it as an optional SKIP, not a FAIL.
+# rasterio>=1.3
+
+# --- satellite data access ---
+earthengine-api>=1.0   # Sentinel-2 SWIR extraction
+geemap>=0.32           # GEE convenience + interactive checks
+boto3>=1.34            # s3://blackmarble-combustion (anonymous access)
+requests>=2.31         # EOG downloads
+tqdm>=4.66             # progress on long downloads
+
+# --- models (RULE 5: simple first) ---
+scikit-learn>=1.4
+lightgbm>=4.3
+xgboost>=2.0
+
+# --- interpretation + figures ---
+shap>=0.45
+matplotlib>=3.8
+
+# --- map + app ---
+folium>=0.16
+streamlit>=1.33
+
+# NOTE: PyTorch is deliberately absent. RULE 5 says the CNN only gets built
+# if the gradient-boosted baseline demonstrably fails in the sub-VIIRS size
+# bins. Add torch here at that point, not before.

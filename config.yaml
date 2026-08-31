@@ -1,0 +1,272 @@
+# FlareFinder — central configuration
+# RULE 7: no magic numbers in code. Every threshold, bound, year and seed
+# lives here. If a number appears in src/, it is a bug.
+#
+# Provenance tags used below:
+#   [LIT]         value taken from published literature (citation given)
+#   [CALIBRATE]   PLACEHOLDER. Not yet justified. Must be set empirically on
+#                 the training split before any result using it is reported.
+#   [CHOICE]      our design decision, defensible but arbitrary
+
+project:
+  name: flarefinder
+  version: 0.1.0
+  description: >
+    Detection of small onshore gas flares in the Gulf via VIIRS + Sentinel-2
+    SWIR fusion, with a physics-constrained learned volume model.
+
+# ---------------------------------------------------------------------------
+# REPRODUCIBILITY (RULE 7)
+# ---------------------------------------------------------------------------
+seeds:
+  global: 42          # numpy / random / python hash seed
+  split: 1337         # train/test partitioning ONLY — never reuse elsewhere
+  model: 7            # model init, subsampling, tree construction
+  bootstrap: 2718     # resampling for confidence intervals
+
+# ---------------------------------------------------------------------------
+# STUDY REGION
+# Region is a LIST, not hardcoded values, so the stretch goal (wider Middle
+# East, offshore) costs a config edit rather than a refactor.
+# tier: core     -> in scope now, part of the headline claim
+# tier: stretch  -> only after core work is validated; report separately
+# bbox: [lon_min, lat_min, lon_max, lat_max] in EPSG:4326. These are
+#       approximate national envelopes for candidate-site filtering,
+#       NOT political borders.
+# ---------------------------------------------------------------------------
+regions:
+  - code: SAU
+    name: Saudi Arabia
+    tier: core
+    bbox: [34.5, 16.0, 55.7, 32.2]
+  - code: IRQ
+    name: Iraq
+    tier: core
+    bbox: [38.8, 29.0, 48.6, 37.4]
+  - code: IRN
+    name: Iran
+    tier: core
+    bbox: [44.0, 25.0, 63.4, 39.8]
+  - code: KWT
+    name: Kuwait
+    tier: stretch
+    bbox: [46.5, 28.5, 48.5, 30.1]
+  - code: ARE
+    name: United Arab Emirates
+    tier: stretch
+    bbox: [51.5, 22.6, 56.4, 26.1]
+  - code: QAT
+    name: Qatar
+    tier: stretch
+    bbox: [50.7, 24.4, 51.7, 26.2]
+  - code: OMN
+    name: Oman
+    tier: stretch
+    bbox: [52.0, 16.6, 59.9, 26.4]
+  - code: BHR
+    name: Bahrain
+    tier: stretch
+    bbox: [50.4, 25.8, 50.8, 26.3]
+
+active_tiers: [core]     # switch to [core, stretch] only when core is done
+
+# Onshore / offshore handling.
+# NOTE: offshore is the EASY case. Water is cold and dark in SWIR, so the
+# desert false-positive problem largely vanishes there. Never pool offshore
+# and onshore into one headline metric — it flatters the result.
+site_domain:
+  include_onshore: true
+  include_offshore: false        # stretch goal only
+  report_separately: true        # non-negotiable if offshore is enabled
+
+# ---------------------------------------------------------------------------
+# TIME RANGE
+# ---------------------------------------------------------------------------
+years:
+  # EOG / VIIRS annual flare catalogue: VIIRS operational from 2012.
+  # VERIFY on download: the 2025 annual file may not be published yet.
+  # If it is missing, drop eog_end to 2024 rather than silently half-filling
+  # the last year -- a partial year would bias every size-binned metric.
+  eog_start: 2012
+  eog_end: 2025
+  # Sentinel-2 L2A: S2A 2015, S2B 2017, global L2A coverage from Dec 2018.
+  # We start at 2019 so every fusion year has both sensors. [CHOICE]
+  s2_start: 2019
+  s2_end: 2025
+  # Years where BOTH sensors exist -> the fusion dataset.
+  fusion_start: 2019
+  fusion_end: 2025
+
+# ---------------------------------------------------------------------------
+# DATA SOURCES
+# ---------------------------------------------------------------------------
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+
+  eog:
+    # Annual per-site flared volume spreadsheets, eogdata.mines.edu
+    # CAVEAT (state in every analysis): EOG volumes are themselves derived
+    # from VIIRS — the sensor whose blind spots we target. EOG is a volume
+    # reference for sites it contains; it is NOT independent evidence for
+    # sites it omits.
+    source_url: https://eogdata.mines.edu
+    raw_subdir: eog
+
+  viirs:
+    # Black Marble combustion product, AWS open data, anonymous access
+    s3_bucket: blackmarble-combustion
+    s3_anonymous: true            # --no-sign-request
+    raw_subdir: viirs
+
+  earthengine:
+    # Earth Engine now requires a Cloud project id on Initialize().
+    # Registered noncommercial, Community tier (150 EECU-hour limit, no
+    # billing account). The quota is the reason src/data_s2.py must cache
+    # every extraction to data/processed and never re-pull an existing file:
+    # debugging against GEE instead of against the cached table is what
+    # burns the budget.
+    project: flarefinder-478291
+
+  sentinel2:
+    gee_collection: COPERNICUS/S2_SR_HARMONIZED
+    # SWIR is where flames glow. B8A kept as a non-SWIR control band.
+    bands: [B8A, B11, B12]
+    band_wavelengths_nm: {B8A: 865, B11: 1610, B12: 2190}
+    native_resolution_m: 20
+    max_cloud_pct: 60             # [CHOICE] permissive: flares are point-like
+                                  # and survive partial cloud. Tighten if the
+                                  # false-positive rate demands it.
+
+  sentinel5p:
+    # Extension only. Not part of the core claim.
+    gee_collection: COPERNICUS/S5P/OFFL/L3_CH4
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# DETECTION THRESHOLDS
+# WARNING: the [CALIBRATE] values below are PLACEHOLDERS chosen to make the
+# pipeline runnable. They are not from literature and carry no authority.
+# Fit them on the TRAINING SPLIT ONLY, then record the fitted values here
+# with a provenance note. Reporting any result that depends on an
+# uncalibrated placeholder is a rule violation.
+# ---------------------------------------------------------------------------
+thresholds:
+  viirs:
+    # Seymour et al. 2025 (Environ. Sci. Technol.): VIIRS misses flares
+    # below roughly this rate. This is the failure we target. [LIT]
+    detection_limit_m3_per_h: 360
+    min_detections_per_year: 1    # [CHOICE] a site counts as being "in the
+                                  # official record" if VIIRS saw it at
+                                  # least this many times
+
+  sentinel2:
+    swir_radiance_min: null       # [CALIBRATE] B12 threshold for a hot pixel
+    b12_b11_ratio_min: null       # [CALIBRATE] flames are relatively hotter
+                                  # at 2190nm than 1610nm; bare desert is not
+    min_hot_pixels: 1             # [CHOICE] 20 m pixels, and small flares are
+                                  # genuinely sub-pixel
+
+  # THE CORE IDEA. Flares flicker across passes. Sun-heated desert follows
+  # the sun and is persistent and seasonal. These separate the two.
+  intermittency:
+    min_passes_per_site: 8        # [CHOICE] below this the temporal
+                                  # statistics are too noisy to trust
+    detection_rate_min: null      # [CALIBRATE] fraction of passes that are hot
+    detection_rate_max: null      # [CALIBRATE] ALWAYS hot => probably ground,
+                                  # not a flare
+    require_night_day_disagreement: true   # a real flare burns at night too;
+                                           # sun-heated ground does not
+
+  site_matching:
+    # Radius for joining a detection to an EOG catalogue site.
+    match_radius_m: 500           # [CHOICE] ~25 Sentinel-2 pixels. Sensitive
+                                  # parameter — run a sensitivity sweep on it.
+
+# ---------------------------------------------------------------------------
+# EVALUATION (RULES 1, 2, 3)
+# ---------------------------------------------------------------------------
+evaluation:
+  # RULE 1: never evaluate on training sites or years.
+  holdouts:
+    by_site: true
+    by_year: true
+    by_region: true               # required for the stretch goal. If the
+                                  # model does not transfer across countries,
+                                  # that is a reportable negative result.
+  test_fraction: 0.2              # [CHOICE]
+  cv_folds: 5                     # [CHOICE]
+  held_out_years: [2023, 2024]    # [CHOICE] most recent = hardest and the
+                                  # most realistic forward-monitoring test
+  held_out_regions: [SAU]         # train on IRQ + IRN, test on SAU
+
+  # RULE 2: error must be reported as a function of flare size.
+  # Bin edges in m3/h. The first two bins sit below the VIIRS detection
+  # limit — that is the entire point of the project.
+  size_bins_m3_per_h: [0, 100, 360, 1000, 5000, 20000, null]
+  size_bin_labels: [tiny, sub-VIIRS, small, medium, large, very-large]
+
+  # RULE 3: every headline number gets a bootstrap confidence interval.
+  bootstrap:
+    n_resamples: 10000
+    ci_level: 0.95
+    method: percentile
+
+  metrics:
+    detection: [precision, recall, f1, pr_auc, false_positive_rate]
+    volume: [mae, rmse, mape, bias, r2, coverage_of_prediction_interval]
+
+# ---------------------------------------------------------------------------
+# MODELS (RULES 4, 5, 6)
+# ---------------------------------------------------------------------------
+models:
+  dir: models
+
+  # RULE 6: this runs FIRST. We must measure the failure before claiming to
+  # fix it. Reproduce the standard published VIIRS volume calibration and
+  # quantify its size-dependent bias (Elvidge et al. 2024, Energies: small
+  # flares overestimated, large flares underestimated).
+  baseline:
+    name: viirs_power_law_calibration
+    run_before_anything_else: true
+
+  # RULE 5: simpler model first. Only escalate if it demonstrably wins.
+  detection:
+    primary: lightgbm
+    escalate_to_cnn_only_if: GBT recall in the sub-VIIRS size bins is inadequate
+
+  volume:
+    primary: lightgbm
+    # RULE 4: structurally incapable of predicting a negative volume.
+    # log1p target with an expm1 inverse cannot produce a negative estimate.
+    target_transform: log1p
+    inverse_transform: expm1
+    nonnegativity: structural     # NOT clipping. Clipping is a patch, and a
+                                  # clipped negative prediction is still a
+                                  # signal that the model is wrong.
+    uncertainty:
+      method: quantile_regression
+      quantiles: [0.05, 0.5, 0.95]
+
+  # Not built. Requires explicit justification against RULE 5.
+  cnn:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# EXPERIMENT LOGGING (RULE 8)
+# ---------------------------------------------------------------------------
+experiments:
+  log_path: experiments/log.csv
+  log_every_run: true
+  fail_if_unlogged: true          # a result that was not logged did not happen
+
+# ---------------------------------------------------------------------------
+# OUTPUTS
+# ---------------------------------------------------------------------------
+outputs:
+  figures_dir: figures
+  figure_dpi: 300
+  figure_format: pdf              # vector, for print judging
+  app_dir: app
+  map_center: [26.0, 48.0]        # lat, lon — central Gulf
+  map_zoom: 5
