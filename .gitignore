@@ -33,3 +33,9 @@ desktop.ini
 *.zip
 *.7z
 *.tar.gz
+
+# Generated figures. PNG and PDF are deliverables and ARE tracked.
+# The folium HTML is not: it embeds a random map id on every render, so it
+# produces a ~2 MB diff on every pipeline run. Rebuild it with
+#   python run.py figures
+figures/*.html

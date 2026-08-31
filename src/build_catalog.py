@@ -41,7 +41,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.config import Config, load_config
+from src.config import HOURS_PER_YEAR, Config, load_config
 from src.data_eog import build_site_year_table
 
 EARTH_RADIUS_M = 6_371_000.0
@@ -163,10 +163,15 @@ def build_catalog(cfg: Config) -> tuple[pd.DataFrame, pd.DataFrame]:
     n_years = agg.groupby("site_id", as_index=False).size().rename(columns={"size": "n_years_observed"})
     agg = agg.merge(n_years, on="site_id", how="left")
 
+    # Carry m3/h alongside Mm3/yr. Every threshold in this project is quoted
+    # in m3/h (the unit of the VIIRS detection limit), and recomputing the
+    # conversion at each call site is how the two drift apart.
+    agg["m3_per_h"] = agg["volume_mcm"] * 1e6 / HOURS_PER_YEAR
+
     cols = [
         "site_id", "lat", "lon", "country", "region_code", "year",
-        "volume_mcm", "n_years_observed", "avg_temp_k", "ellipticity",
-        "detection_freq", "clear_obs", "n_eog_rows",
+        "volume_mcm", "m3_per_h", "n_years_observed", "avg_temp_k",
+        "ellipticity", "detection_freq", "clear_obs", "n_eog_rows",
     ]
     # Second frame keeps the ORIGINAL per-year coordinates, which the
     # cluster diagnostic needs -- the catalogue itself carries only the

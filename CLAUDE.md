@@ -83,37 +83,54 @@ it does NOT contain. State this distinction in every analysis.
 8. Log every experiment (params + metrics) to experiments/log.csv.
 
 ## Which split supports which claim (measured 2026-08-31, do not mix these up)
-Not every holdout can carry every claim. Measured on the EOG catalogue
-(7,640 Gulf site-years, 2012-2024), the KS statistic between train and test
-log-volume distributions:
+Not every holdout can carry every claim. Measured on catalog.parquet
+(11,787 site-years, 2,490 clustered sites, 2012-2024). KS = Kolmogorov-
+Smirnov statistic between train and test log-volume distributions;
+above 0.150 the pooled number cannot separate a size effect from the
+effect being claimed.
 
-  by-site holdout   KS 0.029   unconfounded  -> HEADLINE PERFORMANCE NUMBERS
-  by-year holdout   KS 0.125   unconfounded  -> FORWARD-MONITORING CLAIM
-  by-region (LORO)  KS 0.10-0.24 (varies)    -> TRANSFER CLAIM ONLY
+  split            test n   KS raw   KS matched   verdict
+  by-site           2,355    0.045      0.016     CLEAN
+  by-year           1,647    0.209      0.049     confounded
+  region, -IRN      4,487    0.195      0.020     confounded
+  region, -IRQ      2,656    0.264      0.035     confounded
+  region, -SAU      4,644    0.362      0.044     confounded, very-large unusable
 
 So:
-- "Our model estimates volume with MAE X +/- Y" comes from the by-site or
-  by-year holdout. Never from a region fold.
-- "The model transfers across countries" comes from leave-one-region-out,
-  and ALWAYS paired with the size-matched comparison.
+- BY-SITE is the only unconfounded split. It carries the HEADLINE
+  performance numbers ("MAE X +/- Y"), and it is the only one that can.
+- BY-YEAR carries the forward-monitoring claim, but it is confounded
+  (KS 0.209): the size distribution shifts between the training years and
+  2023-24, so it MUST be reported per size bin or size-matched. Do not
+  quote a pooled by-year number.
+- REGION folds carry the transfer claim ONLY, always with matching.
 - Never let one number do both jobs.
 
-WHY the region split cannot carry a headline number: holding out a region
-changes the flare SIZE distribution at the same time as the geography.
-Saudi median is 266 m3/h against 1,147 for Iraq+Iran. A drop on the Saudi
-fold has two competing explanations - the model does not travel, or the
-model is worse on small flares - and the pooled number cannot separate
-them. src/splits.py quantifies this per fold and builds a size-matched
-training set (KS falls to ~0.03 after matching).
+EVERY region fold is confounded. There is no clean region comparison, so
+every cross-country statement needs the matched set. Size-matching brings
+all folds to KS <= 0.049, at the cost of sample size.
+
+WHY: holding out a region changes the flare SIZE distribution at the same
+time as the geography. Saudi median is 91 m3/h against 1,147 for Iraq+Iran.
+A drop on the Saudi fold has two competing explanations - the model does
+not travel, or the model is worse on small flares - and the pooled number
+cannot separate them. src/splits.py quantifies this for every split and
+builds a size-matched training set.
 
 Leave-one-region-out, not one fixed fold: three folds give three transfer
-tests, and a failure that appears in EVERY fold regardless of which region
-is held out is about size, not about crossing a border. It also fixes a
-coverage hole - the very-large bin has ONE Saudi site (unusable), but 327
-and 440 sites in the Iran and Iraq folds.
+tests, and a failure appearing in EVERY fold regardless of which region is
+held out is about size, not about crossing a border.
 
-STANDING LIMITATION to state in the write-up: no claim about very-large
-flares (>20,000 m3/h) in Saudi Arabia is supportable from this catalogue.
+STANDING LIMITATION for the write-up: no claim about very-large flares
+(>20,000 m3/h) in Saudi Arabia is supportable - the catalogue holds 4 such
+sites, below the 20-site floor.
+
+CORRECTION HISTORY (keep, so the numbers are not silently re-trusted):
+earlier drafts of this section reported by-year as unconfounded (KS 0.125)
+and the -IRN fold as clean (KS 0.102). Both were computed before the Saudi
+ISO-code bug was fixed, on a catalogue missing 12 years of Saudi data, and
+on eog_site_year.parquet whose per-year ids made the by-site split leak.
+Superseded by the table above.
 
 ## Stack
 Python 3.11+. earthengine-api, geemap, pandas, geopandas, numpy,

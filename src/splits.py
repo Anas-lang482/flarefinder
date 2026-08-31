@@ -218,9 +218,14 @@ def size_matched_train(
 # ---------------------------------------------------------------------------
 def main(config_path: str = "config.yaml") -> int:
     cfg = load_config(config_path)
-    path = cfg.path(cfg["data"]["processed_dir"], "eog_site_year.parquet")
+    # catalog.parquet, NOT eog_site_year.parquet. The latter carries EOG's
+    # per-year site ids, which are re-issued annually, so a by-site split on
+    # it puts the same physical flare in both train and test under two
+    # different ids -- a silent RULE 1 violation. Only the catalogue has the
+    # cross-year clustered ids that make a site split mean anything.
+    path = cfg.path(cfg["data"]["processed_dir"], "catalog.parquet")
     if not path.exists():
-        print(f"missing {path} -- run `python run.py download` first")
+        print(f"missing {path} -- run `python run.py join` first")
         return 1
 
     df = assign_size_bins(pd.read_parquet(path), cfg)
@@ -272,6 +277,31 @@ def main(config_path: str = "config.yaml") -> int:
                 "unusable_bins": ";".join(map(str, rep["unusable_bins"])) or "-",
             }
         )
+
+    # The same diagnostic on the site and year splits. It was region-only at
+    # first, on the assumption that only a region shift moves the size
+    # distribution. That assumption failed once the Saudi data was recovered:
+    # by-year came out at KS 0.209. Any split can be confounded, so check all.
+    print()
+    print("=" * 72)
+    print("NON-REGION SPLITS -- same diagnostic")
+    print("=" * 72)
+    for _name, _fn in (("by-site", site_holdout), ("by-year", year_holdout)):
+        _tr, _te = _fn(df, cfg)
+        _rep = confound_report(_tr, _te, cfg)
+        _m = size_matched_train(_tr, _te, cfg)
+        _ka = ks_statistic(_m["m3_per_h"], _te["m3_per_h"]) if len(_m) else float("nan")
+        _v = "CONFOUNDED" if _rep["confounded"] else "clean"
+        print(
+            f"  {_name:<8} train={len(_tr):>6} test={len(_te):>6}  "
+            f"KS={_rep['ks']:.3f} -> {_v:<11} (matched n={len(_m)}, KS after {_ka:.3f})"
+        )
+        summary.append({
+            "held_out": _name, "test_n": len(_te), "ks_raw": round(_rep["ks"], 3),
+            "ks_matched": round(_ka, 3), "matched_n": len(_m),
+            "confounded": _rep["confounded"],
+            "unusable_bins": ";".join(map(str, _rep["unusable_bins"])) or "-",
+        })
 
     print("\n" + "=" * 72)
     print("SUMMARY -- report every transfer claim against ALL folds, not one")
