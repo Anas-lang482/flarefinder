@@ -39,14 +39,22 @@ regions:
     name: Saudi Arabia
     tier: core
     bbox: [34.5, 16.0, 55.7, 32.2]
+    # !! The EOG workbook does NOT use standard ISO3 here. Verified against
+    # the 2024 file on 2026-08-31: Saudi rows carry SAUCROP, plus SAUKWTNZ
+    # for the Saudi-Kuwait Neutral Zone. Filtering on "SAU" returns ZERO
+    # rows -- which would silently empty the held-out test region.
+    # Always join on these codes, never on the region `code` above.
+    eog_iso_codes: [SAUCROP, SAUKWTNZ]
   - code: IRQ
     name: Iraq
     tier: core
     bbox: [38.8, 29.0, 48.6, 37.4]
+    eog_iso_codes: [IRQ]
   - code: IRN
     name: Iran
     tier: core
     bbox: [44.0, 25.0, 63.4, 39.8]
+    eog_iso_codes: [IRN]
   - code: KWT
     name: Kuwait
     tier: stretch
@@ -87,15 +95,17 @@ years:
   # VERIFY on download: the 2025 annual file may not be published yet.
   # If it is missing, drop eog_end to 2024 rather than silently half-filling
   # the last year -- a partial year would bias every size-binned metric.
+  # VERIFIED 2026-08-31: EOG publishes through 2024 only. The 2025 annual
+  # file does not exist yet, so the fusion range stops at 2024.
   eog_start: 2012
-  eog_end: 2025
+  eog_end: 2024
   # Sentinel-2 L2A: S2A 2015, S2B 2017, global L2A coverage from Dec 2018.
   # We start at 2019 so every fusion year has both sensors. [CHOICE]
   s2_start: 2019
-  s2_end: 2025
+  s2_end: 2024
   # Years where BOTH sensors exist -> the fusion dataset.
   fusion_start: 2019
-  fusion_end: 2025
+  fusion_end: 2024
 
 # ---------------------------------------------------------------------------
 # DATA SOURCES
@@ -114,10 +124,16 @@ data:
     raw_subdir: eog
 
   viirs:
-    # Black Marble combustion product, AWS open data, anonymous access
-    s3_bucket: blackmarble-combustion
-    s3_anonymous: true            # --no-sign-request
+    # DISPROVEN 2026-08-31: s3://blackmarble-combustion does not exist
+    # (anonymous boto3 list -> NoSuchBucket, plus 7 variants). Nulled rather
+    # than deleted so nobody re-adds it from the same bad source.
+    s3_bucket: null
+    s3_anonymous: true            # --no-sign-request, if a bucket is found
     raw_subdir: viirs
+    # Access path still UNRESOLVED. Decide before implementing data_viirs.py:
+    #   eog_vnf   -- eogdata.mines.edu, EOG account (already held)
+    #   laads     -- NASA Black Marble VNP46, needs Earthdata token
+    access_method: null
 
   earthengine:
     # Earth Engine now requires a Cloud project id on Initialize().
@@ -199,6 +215,31 @@ evaluation:
   held_out_years: [2023, 2024]    # [CHOICE] most recent = hardest and the
                                   # most realistic forward-monitoring test
   held_out_regions: [SAU]         # train on IRQ + IRN, test on SAU
+
+  # -------------------------------------------------------------------
+  # CONFOUND CONTROL (added 2026-08-31, from a measured problem)
+  # Holding out SAU confounds REGION shift with SIZE shift. Measured on the
+  # 2024 catalogue: Saudi flares average ~850 m3/h, Iranian ~7800 m3/h --
+  # roughly 9x. So a performance drop on the SAU holdout has two competing
+  # explanations (the model does not transfer geographically / the model is
+  # worse on small flares) and the pooled number cannot separate them.
+  # These settings force the separation instead of leaving it to judgement.
+  # -------------------------------------------------------------------
+  confound_control:
+    enabled: true
+    # Region-holdout metrics are reported PER SIZE BIN, never pooled alone.
+    stratify_by_size: true
+    # Build a size-matched training set: resample the training regions so
+    # their size-bin proportions match the held-out region. Difference that
+    # survives matching is geographic; difference that vanishes was size.
+    size_matched_comparison: true
+    matching_seed_key: split      # reuse seeds.split, never seeds.model
+    # A per-bin metric on fewer sites than this is noise, not a result.
+    min_sites_per_bin: 20
+    # Kolmogorov-Smirnov statistic between train and test log-volume
+    # distributions. Above this, a pooled region number is NOT reportable
+    # on its own and must be accompanied by the matched comparison.
+    max_acceptable_ks: 0.15
 
   # RULE 2: error must be reported as a function of flare size.
   # Bin edges in m3/h. The first two bins sit below the VIIRS detection

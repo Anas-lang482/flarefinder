@@ -29,6 +29,7 @@ REQUIRED_PACKAGES = [
     ("numpy", "numpy", "numerics"),
     ("pandas", "pandas", "site-year tables"),
     ("pyarrow", "pyarrow", "parquet in data/processed"),
+    ("openpyxl", "openpyxl", "reads the EOG .xlsx catalogue"),
     ("yaml", "pyyaml", "config.yaml loader"),
     ("geopandas", "geopandas", "site geometry"),
     ("shapely", "shapely", "geometry ops"),

@@ -56,8 +56,17 @@ it does NOT contain. State this distinction in every analysis.
 
 ## Data sources (all free)
 - EOG annual flare site spreadsheets: eogdata.mines.edu (account registered)
-- VIIRS Nightfire / Black Marble combustion: AWS open data
-  (s3://blackmarble-combustion, --no-sign-request) and EOG VNF files
+- VIIRS Nightfire / Black Marble combustion:
+  !! CORRECTION (verified 2026-08-31): s3://blackmarble-combustion DOES NOT
+     EXIST. Probed anonymously with boto3 -> NoSuchBucket, as did seven
+     plausible variants. Do not build against this path.
+  Candidate replacements, in order of preference:
+    1. EOG VNF files from eogdata.mines.edu (EOG account -- already held).
+       Per-pass nighttime detections. VERIFY next.
+    2. NASA Black Marble VNP46 via LAADS DAAC. Requires a NASA Earthdata
+       login token -- this is why the Earthdata account matters after all.
+  Whichever is used, confirm it returns real bytes BEFORE writing
+  src/data_viirs.py against it.
 - Sentinel-2 L2A SR: Google Earth Engine, COPERNICUS/S2_SR_HARMONIZED
   (SWIR bands B11 1610nm, B12 2190nm; flames glow in SWIR)
 - Sentinel-5P methane: GEE COPERNICUS/S5P/OFFL/L3_CH4 (extension only)

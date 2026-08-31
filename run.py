@@ -29,6 +29,7 @@ STAGES = {
     "download": ("src.data_eog", "Fetch EOG catalogue, VIIRS/Black Marble passes, Sentinel-2 scenes."),
     "join": ("src.data_eog", "Match detections to EOG sites and assemble the site-year table."),
     "features": ("src.features", "Build fusion features, including temporal intermittency."),
+    "splits": ("src.splits", "Build by-site/year/region holdouts and run the confound diagnostic."),
     "baseline": ("src.baseline", "RULE 6: reproduce the standard VIIRS calibration and measure its bias."),
     "train": ("src.model_volume", "Fit detection and volume models on the training split only."),
     "evaluate": ("src.evaluate", "Per-size-bin metrics with bootstrap CIs on held-out sites/years/regions."),
@@ -67,6 +68,16 @@ def main(argv: list[str] | None = None) -> int:
         from src import check_env
 
         return check_env.main(args.config)
+
+    if args.stage == "download":
+        from src import data_eog
+
+        return data_eog.main(args.config)
+
+    if args.stage == "splits":
+        from src import splits
+
+        return splits.main(args.config)
 
     print(
         f"\n[flarefinder] NOT IMPLEMENTED: {module} is still a stub.\n"

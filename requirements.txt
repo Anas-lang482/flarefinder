@@ -10,6 +10,8 @@
 numpy>=1.26
 pandas>=2.2
 pyarrow>=15.0          # parquet engine for data/processed
+openpyxl>=3.1          # .xlsx engine -- the EOG annual flare catalogue,
+                       # our ground truth, ships as Excel workbooks
 pyyaml>=6.0            # config.yaml loader
 
 # --- geospatial ---
