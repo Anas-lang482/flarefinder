@@ -27,7 +27,7 @@ from src.config import Config
 FIELDS = [
     "run_id", "timestamp", "stage", "script", "config_hash", "git_commit",
     "region_scope", "split_type", "split_fold", "model", "params_json",
-    "metric", "size_bin", "value", "ci_lo", "ci_hi", "n_samples", "notes",
+    "metric", "size_bin", "value", "ci_low", "ci_high", "n_samples", "notes",
 ]
 
 
@@ -89,8 +89,8 @@ def log_metrics(
                 "metric": r.get("metric", ""),
                 "size_bin": r.get("size_bin", ""),
                 "value": r.get("value", ""),
-                "ci_lo": r.get("ci_lo", ""),
-                "ci_hi": r.get("ci_hi", ""),
+                "ci_low": r.get("ci_lo", ""),
+                "ci_high": r.get("ci_hi", ""),
                 "n_samples": r.get("n", ""),
             })
             w.writerow(row)
