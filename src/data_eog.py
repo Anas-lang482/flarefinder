@@ -157,6 +157,17 @@ def parse_workbook(path: Path) -> pd.DataFrame:
         out["detection_freq"] = pd.to_numeric(df[det_col], errors="coerce") if det_col else pd.NA
         out["clear_obs"] = pd.to_numeric(df[clr_col], errors="coerce") if clr_col else pd.NA
 
+        # detection_freq units are NOT consistent across workbooks. Verified
+        # 2026-08-31: percent (0-100) in 2012-2016 and 2018-2021, fraction
+        # (0-1) in 2017 and 2022-2024. Left mixed, the column is meaningless
+        # -- and it is the intermittency signal this whole project rests on.
+        # Normalise everything to a FRACTION. The test is per year-column,
+        # because a value above 1.0 is impossible on the fraction scale.
+        det = pd.to_numeric(out["detection_freq"], errors="coerce")
+        if det.notna().any() and float(det.max()) > 1.0:
+            out["detection_freq"] = det / 100.0
+            out.attrs["detection_freq_rescaled"] = True
+
         out["source_file"] = path.name
         frames.append(out)
 

@@ -85,6 +85,11 @@ def main(argv: list[str] | None = None) -> int:
 
         return figures.main(args.config)
 
+    if args.stage == "baseline":
+        from src import baseline
+
+        return baseline.main(args.config)
+
     if args.stage == "splits":
         from src import splits
 
