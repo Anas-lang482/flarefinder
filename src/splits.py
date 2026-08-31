@@ -70,6 +70,30 @@ def region_holdout(df: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, pd.Data
     return train, test
 
 
+def leave_one_region_out(
+    df: pd.DataFrame, cfg: Config
+) -> list[tuple[str, pd.DataFrame, pd.DataFrame]]:
+    """One fold per region: hold that region out, train on the rest.
+
+    Preferred over a single fixed holdout for the transfer claim. Three folds
+    give three independent tests, and comparing them separates geography from
+    size: a model trained on small Saudi flares that ALSO fails on large
+    Iranian ones is failing at size, not at crossing a border. A single fold
+    cannot make that distinction, and this project's one fixed fold happens
+    to be the one whose very-large bin holds a single site.
+    """
+    regions = sorted(df["region_code"].dropna().unique())
+    folds = []
+    for r in regions:
+        test = df[df["region_code"] == r].copy()
+        train = df[df["region_code"] != r].copy()
+        if train.empty or test.empty:
+            continue
+        _assert_disjoint(train, test, "region")
+        folds.append((r, train, test))
+    return folds
+
+
 def year_holdout(df: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, pd.DataFrame]:
     held = set(cfg.evaluation["held_out_years"])
     test = df[df["year"].isin(held)].copy()
@@ -200,36 +224,64 @@ def main(config_path: str = "config.yaml") -> int:
         return 1
 
     df = assign_size_bins(pd.read_parquet(path), cfg)
-    train, test = region_holdout(df, cfg)
 
-    print("=" * 72)
-    print("REGION HOLDOUT -- CONFOUND DIAGNOSTIC")
-    print("=" * 72)
-    print(f"train regions : {sorted(train['region_code'].unique())}  n={len(train)}")
-    print(f"test  regions : {sorted(test['region_code'].unique())}  n={len(test)}")
-
-    rep = confound_report(train, test, cfg)
-    print(f"\nmedian volume  train {rep['train_median_m3h']:>10.1f} m3/h")
-    print(f"               test  {rep['test_median_m3h']:>10.1f} m3/h")
-    print(f"\nKS(log10 volume) = {rep['ks']:.3f}   threshold = {rep['ks_threshold']:.3f}")
-    if rep["confounded"]:
-        print("  -> CONFOUNDED. A pooled region-holdout number is NOT reportable")
-        print("     on its own. Report per size bin, plus the matched comparison.")
+    mode = cfg.evaluation.get("region_holdout_mode", "fixed")
+    if mode == "leave_one_out":
+        folds = leave_one_region_out(df, cfg)
     else:
-        print("  -> distributions comparable; pooled number is defensible.")
+        train, test = region_holdout(df, cfg)
+        folds = [(",".join(sorted(test["region_code"].unique())), train, test)]
 
-    print("\nsize-bin composition:")
-    print(rep["per_bin"].to_string(float_format=lambda v: f"{v:.1f}"))
-    if rep["unusable_bins"]:
-        print(f"\n  bins with too few test sites to carry a metric: {rep['unusable_bins']}")
-        print(f"  (min_sites_per_bin = {cfg.evaluation['confound_control']['min_sites_per_bin']})")
+    print("=" * 72)
+    print(f"REGION HOLDOUT -- CONFOUND DIAGNOSTIC   (mode: {mode}, {len(folds)} fold(s))")
+    print("=" * 72)
 
-    matched = size_matched_train(train, test, cfg)
-    print(f"\nsize-matched training set: n={len(matched)} (from {len(train)})")
-    if len(matched):
-        print(f"KS after matching = {ks_statistic(matched['m3_per_h'], test['m3_per_h']):.3f}")
-        print("  Any performance gap that survives THIS comparison is geographic,")
-        print("  not an artefact of Saudi flares being smaller.")
+    summary = []
+    for held, train, test in folds:
+        rep = confound_report(train, test, cfg)
+        matched = size_matched_train(train, test, cfg)
+        ks_after = (
+            ks_statistic(matched["m3_per_h"], test["m3_per_h"]) if len(matched) else float("nan")
+        )
+
+        print(f"\n--- fold: hold out {held} " + "-" * (48 - len(held)))
+        print(f"train {sorted(train['region_code'].unique())} n={len(train)}   test n={len(test)}")
+        print(
+            f"median m3/h  train {rep['train_median_m3h']:>9.1f}   "
+            f"test {rep['test_median_m3h']:>9.1f}"
+        )
+        print(
+            f"KS {rep['ks']:.3f} (threshold {rep['ks_threshold']:.3f})"
+            f"  ->  {'CONFOUNDED' if rep['confounded'] else 'comparable'}"
+        )
+        print(f"size-matched train n={len(matched)} (from {len(train)}), KS after = {ks_after:.3f}")
+        print(rep["per_bin"][["train_n", "test_n", "test_pct", "usable"]].to_string(
+            float_format=lambda v: f"{v:.1f}"
+        ))
+        if rep["unusable_bins"]:
+            print(f"  UNUSABLE bins (test n < {cfg.evaluation['confound_control']['min_sites_per_bin']}): {rep['unusable_bins']}")
+
+        summary.append(
+            {
+                "held_out": held,
+                "test_n": len(test),
+                "ks_raw": round(rep["ks"], 3),
+                "ks_matched": round(ks_after, 3),
+                "matched_n": len(matched),
+                "confounded": rep["confounded"],
+                "unusable_bins": ";".join(map(str, rep["unusable_bins"])) or "-",
+            }
+        )
+
+    print("\n" + "=" * 72)
+    print("SUMMARY -- report every transfer claim against ALL folds, not one")
+    print("=" * 72)
+    print(pd.DataFrame(summary).to_string(index=False))
+    print(
+        "\nA gap that survives size-matching is geographic. A gap that appears\n"
+        "in every fold regardless of which region is held out is about flare\n"
+        "size, not about crossing a border."
+    )
     return 0
 
 

@@ -214,7 +214,16 @@ evaluation:
   cv_folds: 5                     # [CHOICE]
   held_out_years: [2023, 2024]    # [CHOICE] most recent = hardest and the
                                   # most realistic forward-monitoring test
-  held_out_regions: [SAU]         # train on IRQ + IRN, test on SAU
+  held_out_regions: [SAU]         # used only when region_holdout_mode: fixed
+
+  # leave_one_out runs one fold per core region (hold out SAU, then IRQ,
+  # then IRN) instead of a single fixed SAU fold. Three transfer tests
+  # rather than one, and it separates geography from size: if a model
+  # trained on small Saudi flares ALSO fails on large Iranian ones, the
+  # failure is about size, not about crossing a border. It also stops the
+  # whole transfer claim resting on the one fold whose very-large bin
+  # contains a single site.
+  region_holdout_mode: leave_one_out    # leave_one_out | fixed
 
   # -------------------------------------------------------------------
   # CONFOUND CONTROL (added 2026-08-31, from a measured problem)

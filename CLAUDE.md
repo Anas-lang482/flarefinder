@@ -82,6 +82,39 @@ it does NOT contain. State this distinction in every analysis.
 7. All code reproducible: fixed seeds, config files, no magic numbers.
 8. Log every experiment (params + metrics) to experiments/log.csv.
 
+## Which split supports which claim (measured 2026-08-31, do not mix these up)
+Not every holdout can carry every claim. Measured on the EOG catalogue
+(7,640 Gulf site-years, 2012-2024), the KS statistic between train and test
+log-volume distributions:
+
+  by-site holdout   KS 0.029   unconfounded  -> HEADLINE PERFORMANCE NUMBERS
+  by-year holdout   KS 0.125   unconfounded  -> FORWARD-MONITORING CLAIM
+  by-region (LORO)  KS 0.10-0.24 (varies)    -> TRANSFER CLAIM ONLY
+
+So:
+- "Our model estimates volume with MAE X +/- Y" comes from the by-site or
+  by-year holdout. Never from a region fold.
+- "The model transfers across countries" comes from leave-one-region-out,
+  and ALWAYS paired with the size-matched comparison.
+- Never let one number do both jobs.
+
+WHY the region split cannot carry a headline number: holding out a region
+changes the flare SIZE distribution at the same time as the geography.
+Saudi median is 266 m3/h against 1,147 for Iraq+Iran. A drop on the Saudi
+fold has two competing explanations - the model does not travel, or the
+model is worse on small flares - and the pooled number cannot separate
+them. src/splits.py quantifies this per fold and builds a size-matched
+training set (KS falls to ~0.03 after matching).
+
+Leave-one-region-out, not one fixed fold: three folds give three transfer
+tests, and a failure that appears in EVERY fold regardless of which region
+is held out is about size, not about crossing a border. It also fixes a
+coverage hole - the very-large bin has ONE Saudi site (unusable), but 327
+and 440 sites in the Iran and Iraq folds.
+
+STANDING LIMITATION to state in the write-up: no claim about very-large
+flares (>20,000 m3/h) in Saudi Arabia is supportable from this catalogue.
+
 ## Stack
 Python 3.11+. earthengine-api, geemap, pandas, geopandas, numpy,
 scikit-learn, xgboost, lightgbm, matplotlib, shap, folium.
