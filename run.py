@@ -30,6 +30,7 @@ STAGES = {
     "vnf": ("src.data_viirs", "Download VIIRS Nightfire per-detection records (needs EOG token)."),
     "join": ("src.build_catalog", "Cluster sites across years into stable ids; build catalog.parquet."),
     "features": ("src.features", "Build fusion features, including temporal intermittency."),
+    "trends": ("src.trends", "Multi-year flaring trend vs Zero Routine Flaring 2030."),
     "splits": ("src.splits", "Build by-site/year/region holdouts and run the confound diagnostic."),
     "figures": ("src.figures", "Render publication figures (fig01 flare map: PNG, PDF, HTML)."),
     "baseline": ("src.baseline", "RULE 6: reproduce the standard VIIRS calibration and measure its bias."),
@@ -96,6 +97,11 @@ def main(argv: list[str] | None = None) -> int:
         from src import baseline
 
         return baseline.main(args.config)
+
+    if args.stage == "trends":
+        from src import trends
+
+        return trends.main(args.config)
 
     if args.stage == "splits":
         from src import splits
