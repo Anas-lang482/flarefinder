@@ -71,6 +71,66 @@ it does NOT contain. State this distinction in every analysis.
   (SWIR bands B11 1610nm, B12 2190nm; flames glow in SWIR)
 - Sentinel-5P methane: GEE COPERNICUS/S5P/OFFL/L3_CH4 (extension only)
 
+## VNF LICENCE CONSTRAINTS (read before designing any output)
+VNF is covered by the VIIRS Nightfire Academic Data Use License (v.
+2026-01-26). It is NOT click-through: it must be signed and emailed to
+eog@mines.edu / victoria.patti@mines.edu, and approved. One year, no cost.
+Five clauses change what this project may produce:
+
+1(b) NO redistribution of VNF data in machine-readable form (csv/json/xml)
+     or any format enabling bulk download.
+     -> The reproducibility package may publish DERIVED products only.
+        Never the raw VNF, and never a downloadable per-detection table.
+
+1(e) NO public disclosure of flared gas volumes or CO2 emissions for any
+     year EOG has not yet published.
+     -> Our range 2019-2024 is cleared (EOG has published through 2024).
+        2025 is EMBARGOED. Check the published-years list before releasing
+        any volume or CO2e figure:
+        https://eogdata.mines.edu/products/vnf/global_gas_flare.html
+
+1(f) NO temporal profiles finer than WEEKLY, except:
+       i.  internal use within the licensee's affiliation
+       ii. static form -- scientific publication, presentation, prints,
+           in non-downloadable formats
+       iii.interactive web service for a RESTRICTED REGION, and only with
+           EOG approval obtained BEFORE the app goes public
+     -> Per-pass intermittency analysis is fine internally and fine as a
+        static figure in the paper. The Streamlit app showing nightly
+        per-site time series needs EOG's prior written approval, or must
+        aggregate to weekly. Decide this before building the app, not after.
+
+1(c) + 2(a) EVERY product, including graphs, carries:
+     "This product was made utilizing VIIRS Nightfire (VNF) nightly data
+      produced by the Earth Observation Group, Payne Institute for Public
+      Policy, Colorado School of Mines."
+     Short form for single images: "Source: VIIRS Nightfire, Colorado
+     School of Mines." Logos: https://eogdata.mines.edu/products/logo/
+
+1(g) + 2(b) Publications MUST cite EOG papers. The two that matter here:
+     - Zhizhin et al. 2025, "An Improved Calibration for Satellite
+       Estimation of Flared Gas Volumes from VIIRS Nighttime Data",
+       Energies 18(17):4765 -- THE CURRENT CALIBRATION. Read before
+       finishing baseline.py; it is the formula we are trying to reproduce.
+     - Zhizhin et al. 2026, "VIIRS Nightfire Super-Resolution Method for
+       Multiyear Cataloging of Natural Gas Flaring Sites: 2012-2025",
+       Remote Sensing 18(2):314 -- EOG's own cross-year site cataloguing.
+       Compare against our 750 m clustering.
+     Plus Elvidge et al. 2013 (VNF description) and 2016 (flaring methods).
+
+## Useful discoveries from the licence document
+- GIREE, the Global Infrared Emitter Explorer:
+  https://eogmap.mines.edu/giree
+  A catalogue of ~20,000 industrial infrared emitters WITH EMITTER TYPE
+  (steel mills, upstream flares, etc.) and nightly temporal profiles.
+  This is very likely the ready-made NEGATIVE CONTROL SET for the
+  false-positive audit: known industrial hot sources that are NOT flares
+  are exactly what the detector must not fire on. Investigate before
+  hand-building control points.
+- EOG contacts: eog@mines.edu, victoria.patti@mines.edu,
+  Dr Mikhail Zhizhin (VNF lead programmer) mzhizhin@mines.edu,
+  Dr Chris Elvidge (EOG director) celvidge@mines.edu
+
 ## Method rules (non-negotiable)
 1. NEVER evaluate on training sites/years. Holdouts: by-site AND by-year.
 2. Report error AS A FUNCTION OF FLARE SIZE (small flares are the point).
