@@ -29,6 +29,8 @@ STAGES = {
     "download": ("src.data_eog", "Fetch EOG catalogue, VIIRS/Black Marble passes, Sentinel-2 scenes."),
     "vnf": ("src.data_viirs", "Download VIIRS Nightfire per-detection records (needs EOG token)."),
     "join": ("src.build_catalog", "Cluster sites across years into stable ids; build catalog.parquet."),
+    "controls": ("src.make_controls", "Generate matched non-flare control points."),
+    "s2": ("src.data_s2", "Sentinel-2 SWIR extraction (--sanity for the premise check)."),
     "features": ("src.features", "Build fusion features, including temporal intermittency."),
     "trends": ("src.trends", "Multi-year flaring trend vs Zero Routine Flaring 2030."),
     "splits": ("src.splits", "Build by-site/year/region holdouts and run the confound diagnostic."),
@@ -52,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default="config.yaml", help="config file (default: config.yaml)")
     parser.add_argument("--dry-run", action="store_true", help="show what would run, change nothing")
     parser.add_argument("--probe", action="store_true", help="vnf: check token and fetch a single night")
+    parser.add_argument("--sanity", action="store_true", help="s2: premise check on the largest flares")
     return parser
 
 
@@ -97,6 +100,16 @@ def main(argv: list[str] | None = None) -> int:
         from src import baseline
 
         return baseline.main(args.config)
+
+    if args.stage == "s2":
+        from src import data_s2
+
+        return data_s2.main(args.config, sanity_mode=args.sanity)
+
+    if args.stage == "controls":
+        from src import make_controls
+
+        return make_controls.main(args.config)
 
     if args.stage == "trends":
         from src import trends

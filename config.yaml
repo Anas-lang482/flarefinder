@@ -166,6 +166,12 @@ data:
     bands: [B8A, B11, B12]
     band_wavelengths_nm: {B8A: 865, B11: 1610, B12: 2190}
     native_resolution_m: 20
+    sanity_b12_b8a_min: 1.2       # [CHOICE] SWIR excess that counts as a
+                                  # thermal signature in the premise check
+    buffer_m: 100                 # [CHOICE] radius sampled around each
+                                  # point. Wider dilutes a sub-pixel
+                                  # flare; narrower risks missing it if
+                                  # the coordinate is a little off.
     max_cloud_pct: 60             # [CHOICE] permissive: flares are point-like
                                   # and survive partial cloud. Tighten if the
                                   # false-positive rate demands it.
@@ -223,6 +229,25 @@ thresholds:
                                        # diagnostic and sweep it: too large
                                        # fuses neighbouring flares, too small
                                        # splits one flare into several ids.
+
+# ---------------------------------------------------------------------------
+# CONTROL POINTS (the detector's negatives)
+# Controls must share terrain, climate and land cover with the real sites.
+# Negatives drawn from elsewhere would make the task trivially easy and the
+# measured performance meaningless.
+# ---------------------------------------------------------------------------
+controls:
+  per_site: 3                        # [CHOICE] 3:1 negative:positive ratio
+  min_distance_m: 5000               # [CHOICE] far enough that a 20 m S2
+                                     # pixel cannot catch the flare itself
+  max_distance_m: 15000              # [CHOICE] close enough to share terrain
+  min_distance_to_any_flare_m: 2000  # [CHOICE] from ANY flare, ANY YEAR --
+                                     # a site that flared in 2015 and went
+                                     # quiet is still not a clean negative
+  require_onshore: true              # water is cold and dark in SWIR, so sea
+                                     # controls are trivially separable and
+                                     # would flatter the detector
+  ee_chunk_size: 2000                # points per Earth Engine getInfo call
 
 # ---------------------------------------------------------------------------
 # EVALUATION (RULES 1, 2, 3)
