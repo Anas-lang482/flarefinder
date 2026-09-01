@@ -112,10 +112,17 @@ def load_token() -> str | None:
         return tok.strip()
     env = Path(__file__).resolve().parent.parent / ".env"
     if env.exists():
-        for line in env.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("EOG_ACCESS_TOKEN="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
+        # utf-8-sig, not utf-8: PowerShell redirection and Out-File often
+        # write a UTF-8 BOM, which would make the first line start with
+        # ﻿ and silently fail the prefix match below -- the token would
+        # look absent while sitting right there in the file.
+        for line in env.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip().lstrip("﻿")
+            if line.startswith("#") or not line:
+                continue
+            if line.startswith("EOG_ACCESS_TOKEN"):
+                val = line.split("=", 1)[1] if "=" in line else ""
+                return val.strip().strip('"').strip("'")
     return None
 
 
