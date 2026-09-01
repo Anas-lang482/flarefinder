@@ -134,10 +134,22 @@ data:
     s3_bucket: null
     s3_anonymous: true            # --no-sign-request, if a bucket is found
     raw_subdir: viirs
-    # Access path still UNRESOLVED. Decide before implementing data_viirs.py:
-    #   eog_vnf   -- eogdata.mines.edu, EOG account (already held)
-    #   laads     -- NASA Black Marble VNP46, needs Earthdata token
-    access_method: null
+    # RESOLVED 2026-09-01: EOG VNF. Verified that every path under
+    # /wwwdata/viirs_products/vnf/ returns 302 to eogauth.mines.edu, so this
+    # source needs a bearer token -- unlike the annual workbooks, which are
+    # public direct links.
+    access_method: eog_vnf
+    vnf_base_url: https://eogdata.mines.edu/wwwdata/viirs_products/vnf
+    vnf_version: v30              # [CALIBRATE] v40/v35/v30/v21 all exist.
+                                  # Confirm against one REAL file before a
+                                  # bulk run -- do not guess the layout.
+    token_env: EOG_ACCESS_TOKEN   # read from .env, which is gitignored.
+                                  # The password never enters this repo.
+    # Start small. One night proves the URL pattern and the token; only then
+    # widen the range. A wrong pattern over 2,000 nights wastes a day.
+    probe_date: 2024-01-15
+    start_date: 2024-01-01
+    end_date: 2024-12-31
 
   earthengine:
     # Earth Engine now requires a Cloud project id on Initialize().

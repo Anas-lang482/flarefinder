@@ -27,6 +27,7 @@ import sys
 STAGES = {
     "check-env": ("src.check_env", "Verify every dependency imports and Earth Engine authenticates."),
     "download": ("src.data_eog", "Fetch EOG catalogue, VIIRS/Black Marble passes, Sentinel-2 scenes."),
+    "vnf": ("src.data_viirs", "Download VIIRS Nightfire per-detection records (needs EOG token)."),
     "join": ("src.build_catalog", "Cluster sites across years into stable ids; build catalog.parquet."),
     "features": ("src.features", "Build fusion features, including temporal intermittency."),
     "splits": ("src.splits", "Build by-site/year/region holdouts and run the confound diagnostic."),
@@ -49,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("stage", choices=list(STAGES), help="pipeline stage to run")
     parser.add_argument("--config", default="config.yaml", help="config file (default: config.yaml)")
     parser.add_argument("--dry-run", action="store_true", help="show what would run, change nothing")
+    parser.add_argument("--probe", action="store_true", help="vnf: check token and fetch a single night")
     return parser
 
 
@@ -74,6 +76,11 @@ def main(argv: list[str] | None = None) -> int:
         from src import data_eog
 
         return data_eog.main(args.config)
+
+    if args.stage == "vnf":
+        from src import data_viirs
+
+        return data_viirs.main(args.config, probe=args.probe)
 
     if args.stage == "join":
         from src import build_catalog
