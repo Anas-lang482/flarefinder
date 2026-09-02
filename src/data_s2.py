@@ -84,55 +84,73 @@ def _init(cfg: Config):
 
 
 def monthly_swir(points: pd.DataFrame, year: int, cfg: Config) -> pd.DataFrame:
-    """Monthly max SWIR per point for one year. One EE call per month."""
+    """Monthly max SWIR per point for one year.
+
+    CHUNKED, and not optionally. A single getInfo over 720 buffered points
+    died silently -- zero output, no exception, no file. Earth Engine drops
+    oversized synchronous payloads rather than raising, so the failure looks
+    exactly like success until you notice nothing was written. Chunking keeps
+    each call small enough to return, and printing per chunk means a stall is
+    visible while it is happening rather than after.
+
+    The full extraction will be ~9,400 points, so this is required anyway.
+    """
     ee = _init(cfg)
     s2cfg = cfg["data"]["sentinel2"]
     buffer_m = float(s2cfg.get("buffer_m", 100))
     max_cloud = float(s2cfg["max_cloud_pct"])
-
-    fc = ee.FeatureCollection([
-        ee.Feature(
-            ee.Geometry.Point([float(r.lon), float(r.lat)]).buffer(buffer_m),
-            {"point_id": str(r.point_id)},
-        )
-        for r in points.itertuples()
-    ])
+    chunk = int(s2cfg.get("ee_chunk_points", 200))
 
     rows = []
     for month in range(1, 13):
         start = ee.Date.fromYMD(year, month, 1)
         end = start.advance(1, "month")
-        col = (
-            ee.ImageCollection(s2cfg["gee_collection"])
-            .filterDate(start, end)
-            .filterBounds(fc.geometry())
-            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", max_cloud))
-            .select(BANDS)
-        )
-        n_scenes = col.size().getInfo()
-        if n_scenes == 0:
-            print(f"    {year}-{month:02d}  no scenes under {max_cloud:.0f}% cloud")
-            continue
+        month_rows, n_scenes = [], None
 
-        # max, not median -- see module docstring.
-        # No setOutputs: a single-output reducer over a multi-band image
-        # already names its results after the bands (B8A, B11, B12).
-        stats = col.max().reduceRegions(
-            collection=fc,
-            reducer=ee.Reducer.max(),
-            scale=int(s2cfg["native_resolution_m"]),
-        )
-        feats = stats.getInfo()["features"]
-        for f in feats:
-            p = f["properties"]
-            rows.append({
-                "point_id": p.get("point_id"),
-                "year": year,
-                "month": month,
-                "n_scenes": n_scenes,
-                **{f"{b}_max": p.get(b) for b in BANDS},
-            })
-        print(f"    {year}-{month:02d}  {n_scenes:>3} scenes, {len(feats)} points")
+        for c0 in range(0, len(points), chunk):
+            part = points.iloc[c0 : c0 + chunk]
+            fc = ee.FeatureCollection([
+                ee.Feature(
+                    ee.Geometry.Point([float(r.lon), float(r.lat)]).buffer(buffer_m),
+                    {"point_id": str(r.point_id)},
+                )
+                for r in part.itertuples()
+            ])
+            col = (
+                ee.ImageCollection(s2cfg["gee_collection"])
+                .filterDate(start, end)
+                .filterBounds(fc.geometry())
+                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", max_cloud))
+                .select(BANDS)
+            )
+            if n_scenes is None:
+                n_scenes = col.size().getInfo()
+            if n_scenes == 0:
+                break
+
+            # max, not median -- see module docstring. No setOutputs: a
+            # single-output reducer over a multi-band image already names its
+            # results after the bands.
+            stats = col.max().reduceRegions(
+                collection=fc,
+                reducer=ee.Reducer.max(),
+                scale=int(s2cfg["native_resolution_m"]),
+            )
+            for f in stats.getInfo()["features"]:
+                pr = f["properties"]
+                month_rows.append({
+                    "point_id": pr.get("point_id"),
+                    "year": year,
+                    "month": month,
+                    "n_scenes": n_scenes,
+                    **{f"{b}_max": pr.get(b) for b in BANDS},
+                })
+
+        if n_scenes == 0:
+            print(f"    {year}-{month:02d}  no scenes under {max_cloud:.0f}% cloud", flush=True)
+        else:
+            print(f"    {year}-{month:02d}  {n_scenes:>4} scenes, {len(month_rows)} point-obs", flush=True)
+        rows.extend(month_rows)
 
     return pd.DataFrame(rows)
 

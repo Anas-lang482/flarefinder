@@ -166,6 +166,11 @@ data:
     bands: [B8A, B11, B12]
     band_wavelengths_nm: {B8A: 865, B11: 1610, B12: 2190}
     native_resolution_m: 20
+    ee_chunk_points: 200          # [CHOICE] points per getInfo. Earth
+                                  # Engine DROPS oversized synchronous
+                                  # payloads silently rather than
+                                  # raising, so a large call looks like
+                                  # success while writing nothing.
     sanity_sites_per_bin: 40      # [CHOICE] must exceed the 20-site
                                   # floor in evaluation.confound_control,
                                   # or every bin is underpowered and the
