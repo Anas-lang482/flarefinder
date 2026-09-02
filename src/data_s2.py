@@ -33,31 +33,44 @@ TWO DESIGN DECISIONS THAT MATTER MORE THAN THEY LOOK
         CLOUDY_PIXEL_PERCENTAGE and pixels are left alone. Revisit only with
         evidence, and check what SCL assigns to known flare pixels first.
 
-SATURATION -- THE METHOD HAS AN UPPER LIMIT AS WELL AS A LOWER ONE
-    Measured 2026-09-01 on the very-large bin (>20,000 m3/h): 65% of B8A and
-    74% of B12 observations sit at or above 10000, which is 100% reflectance.
-    In 63% of observations BOTH bands are saturated at once, and when that
-    happens the B12/B8A ratio is forced toward 1 -- median 0.878 for
-    saturated observations against 1.070 for unsaturated ones.
+SATURATION, AND THE DETECTION CURVE (n=40 per bin, 2024)
+    Saturation is real: at very-large flares 65% of B8A and 74% of B12
+    observations sit at or above 10000, which is 100% reflectance, and in 63%
+    BOTH bands saturate at once, forcing the B12/B8A ratio toward 1.
 
-    So the ratio metric COLLAPSES at the brightest flares. The detection
-    curve fails at both ends for different reasons: too dim to separate below
-    ~360 m3/h, saturated above ~20,000 m3/h. Measured separation (difference
-    in % exceeding B12/B8A > 1.2, 95% CI):
-        tiny         0 pp  [-30, +30]   no separation
-        sub-VIIRS   23 pp  [ -3, +50]   marginal, the decisive bin
-        small       33 pp  [ +3, +60]   separates
-        medium      40 pp  [+10, +67]   separates
-        large       63 pp  [+40, +83]   separates
-        very-large  17 pp  [-13, +47]   fails -- saturation, not dimness
+    CORRECTION: an earlier n=15 run showed very-large FAILING to separate,
+    and that was recorded here as saturation destroying the signal. It does
+    not. At n=40 very-large separates clearly (+48 pp, CI [+30, +64]). The
+    n=15 failure was small-sample noise in a bin below the 20-site floor --
+    the exact error that floor exists to prevent, made by the person who
+    wrote the floor. Saturation compresses the signal (median ratio 1.53 at
+    very-large against 2.52 at medium) without eliminating it.
 
-    CONSEQUENCE FOR features.py: a single ratio cannot span the range. Add
-    saturation-aware features -- a saturated-pixel count, and raw B12 for
-    bright targets with the ratio reserved for dim ones. Never read a
-    saturated radiance as a quantitative brightness.
+    Measured separation, difference in % of sites exceeding B12/B8A > 1.2,
+    flares against their own paired controls, 95% bootstrap CI:
+        tiny         +8 pp  [-10, +25]   no separation
+        sub-VIIRS   +15 pp  [ -2, +32]   MARGINAL -- just fails to exclude 0
+        small       +35 pp  [+17, +52]   separates
+        medium      +50 pp  [+33, +66]   separates
+        large       +61 pp  [+48, +75]   separates
+        very-large  +48 pp  [+30, +64]   separates, despite saturation
 
-    All bins above used n=15, below the 20-site floor in config. Treat as a
-    first read, not a result.
+    WHAT THIS MEANS, STATED CAREFULLY
+    A single hand-set spectral threshold reaches down to about 360 m3/h and
+    no further. sub-VIIRS sits right at the boundary at +15 pp, missing
+    significance rather than showing nothing.
+
+    This is a LOWER BOUND on what is achievable, not a ceiling. It tests one
+    crude threshold on one band ratio from one sensor. It does NOT test a
+    learned model combining temporal intermittency, multiple bands and VNF
+    radiant heat -- which is the actual proposed method. The honest reading
+    is that Sentinel-2 ALONE does not reach the sub-VIIRS regime, which is
+    precisely why the fusion with VNF matters and why that licence is the
+    critical path.
+
+    CONSEQUENCE FOR features.py: add saturation-aware features -- a
+    saturated-pixel count, raw B12 for bright targets, the ratio reserved for
+    dim ones. Never read a saturated radiance as a quantitative brightness.
 
 QUOTA
     Community tier: 150 EECU-hours, no billing account. Every extraction is
