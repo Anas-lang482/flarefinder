@@ -137,7 +137,7 @@ def monthly_swir(points: pd.DataFrame, year: int, cfg: Config) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def sanity(cfg: Config, n_per_bin: int = 15) -> int:
+def sanity(cfg: Config, n_per_bin: int | None = None) -> int:
     """At what flare size does Sentinel-2 stop separating flares from desert?
 
     The first version of this check took the 20 LARGEST flares and passed.
@@ -151,6 +151,9 @@ def sanity(cfg: Config, n_per_bin: int = 15) -> int:
     it stops working is a real finding, not a failure.
     """
     from src.splits import assign_size_bins
+
+    if n_per_bin is None:
+        n_per_bin = int(cfg["data"]["sentinel2"].get("sanity_sites_per_bin", 40))
 
     proc = cfg.path(cfg["data"]["processed_dir"])
     catalog = assign_size_bins(pd.read_parquet(proc / "catalog.parquet"), cfg)
@@ -203,7 +206,9 @@ def sanity(cfg: Config, n_per_bin: int = 15) -> int:
     print(f"total points: {int((pts.kind=='flare').sum())} flares "
           f"+ {int((pts.kind=='control').sum())} paired controls")
 
-    cache = proc / f"s2_bins_{year}.parquet"
+    # n is in the filename: a cache built at one sample size must never
+    # be silently reused for another.
+    cache = proc / f"s2_bins_{year}_n{n_per_bin}.parquet"
     if cache.exists():
         print()
         print(f"using cached {cache.name} (delete to re-pull from Earth Engine)")

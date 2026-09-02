@@ -35,7 +35,6 @@ REQUIRED_PACKAGES = [
     ("shapely", "shapely", "geometry ops"),
     ("pyproj", "pyproj", "projections / metre distances"),
     ("ee", "earthengine-api", "Sentinel-2 SWIR extraction"),
-    ("geemap", "geemap", "GEE convenience"),
     ("boto3", "boto3", "s3://blackmarble-combustion"),
     ("requests", "requests", "EOG downloads"),
     ("tqdm", "tqdm", "download progress"),
@@ -53,6 +52,12 @@ REQUIRED_PACKAGES = [
 # you to ignore the FAIL column, which is the one that matters.
 # (import name, pip name, why it is optional)
 OPTIONAL_PACKAGES = [
+    (
+        "geemap",
+        "geemap",
+        "GEE convenience wrapper -- unused: every Earth Engine call in src/ "
+        "uses the `ee` API directly, so geemap being blocked costs nothing",
+    ),
     (
         "rasterio",
         "rasterio",
@@ -121,7 +126,15 @@ def check_packages(report: Report) -> None:
         try:
             mod = importlib.import_module(import_name)
         except Exception as exc:  # ImportError, but also DLL errors on Windows
-            report.record("FAIL", f"{pip_name:<18}", f"{type(exc).__name__}: {exc}")
+            msg = f"{type(exc).__name__}: {exc}"
+            # Windows Smart App Control blocks unsigned native DLLs based on a
+            # cloud reputation lookup, so the SAME package can import fine one
+            # run and fail the next. Say so, or this looks like a broken
+            # install and someone reinstalls packages that were never broken.
+            if "Application Control" in str(exc):
+                msg = ("BLOCKED by Windows Smart App Control (not a broken "
+                       "install; this failure is intermittent) -- " + msg)
+            report.record("FAIL", f"{pip_name:<18}", msg)
             continue
         version = getattr(mod, "__version__", "unknown")
         report.record("PASS", f"{pip_name:<18}", f"{version}  ({why})")
