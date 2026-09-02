@@ -33,6 +33,32 @@ TWO DESIGN DECISIONS THAT MATTER MORE THAN THEY LOOK
         CLOUDY_PIXEL_PERCENTAGE and pixels are left alone. Revisit only with
         evidence, and check what SCL assigns to known flare pixels first.
 
+SATURATION -- THE METHOD HAS AN UPPER LIMIT AS WELL AS A LOWER ONE
+    Measured 2026-09-01 on the very-large bin (>20,000 m3/h): 65% of B8A and
+    74% of B12 observations sit at or above 10000, which is 100% reflectance.
+    In 63% of observations BOTH bands are saturated at once, and when that
+    happens the B12/B8A ratio is forced toward 1 -- median 0.878 for
+    saturated observations against 1.070 for unsaturated ones.
+
+    So the ratio metric COLLAPSES at the brightest flares. The detection
+    curve fails at both ends for different reasons: too dim to separate below
+    ~360 m3/h, saturated above ~20,000 m3/h. Measured separation (difference
+    in % exceeding B12/B8A > 1.2, 95% CI):
+        tiny         0 pp  [-30, +30]   no separation
+        sub-VIIRS   23 pp  [ -3, +50]   marginal, the decisive bin
+        small       33 pp  [ +3, +60]   separates
+        medium      40 pp  [+10, +67]   separates
+        large       63 pp  [+40, +83]   separates
+        very-large  17 pp  [-13, +47]   fails -- saturation, not dimness
+
+    CONSEQUENCE FOR features.py: a single ratio cannot span the range. Add
+    saturation-aware features -- a saturated-pixel count, and raw B12 for
+    bright targets with the ratio reserved for dim ones. Never read a
+    saturated radiance as a quantitative brightness.
+
+    All bins above used n=15, below the 20-site floor in config. Treat as a
+    first read, not a result.
+
 QUOTA
     Community tier: 150 EECU-hours, no billing account. Every extraction is
     cached to parquet and never re-pulled. Debug against the cached table,
@@ -111,118 +137,139 @@ def monthly_swir(points: pd.DataFrame, year: int, cfg: Config) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def sanity(cfg: Config, n_sites: int = 20) -> int:
-    """Do the biggest known flares actually glow in SWIR?"""
+def sanity(cfg: Config, n_per_bin: int = 15) -> int:
+    """At what flare size does Sentinel-2 stop separating flares from desert?
+
+    The first version of this check took the 20 LARGEST flares and passed.
+    That answered a question nobody was asking: everyone already knows huge
+    flares are visible from space -- Liu et al. 2023 operationalised exactly
+    that offshore. This project is about the small ones, so the check now
+    samples every size bin and reports separation per bin.
+
+    The output is a detection curve, not a verdict. It says which size bins
+    can carry a claim and where the method stops working -- and a bin where
+    it stops working is a real finding, not a failure.
+    """
+    from src.splits import assign_size_bins
+
     proc = cfg.path(cfg["data"]["processed_dir"])
-    catalog = pd.read_parquet(proc / "catalog.parquet")
+    catalog = assign_size_bins(pd.read_parquet(proc / "catalog.parquet"), cfg)
     controls = pd.read_parquet(proc / "controls.parquet")
 
     year = int(cfg.years["s2_end"])
     latest = catalog[catalog["year"] == year]
     if "is_onshore" in latest.columns:
         latest = latest[latest["is_onshore"].astype(bool)]
-    top = latest.nlargest(n_sites, "volume_mcm")[["site_id", "lat", "lon", "volume_mcm"]]
 
-    ctl = controls[controls["paired_site_id"].isin(top["site_id"])]
+    # Sample per bin, seeded from seeds.split -- this is sample selection,
+    # not model fitting, so it must not share a seed with the model.
+    rng_seed = int(cfg.seeds["split"])
+    picked = []
+    for b in latest["size_bin"].cat.categories:
+        sub = latest[latest["size_bin"] == b]
+        if len(sub) == 0:
+            continue
+        picked.append(sub.sample(min(n_per_bin, len(sub)), random_state=rng_seed))
+    flares = pd.concat(picked, ignore_index=True)[
+        ["site_id", "lat", "lon", "volume_mcm", "m3_per_h", "size_bin"]
+    ]
+
+    # Two controls per sampled flare. Controls are matched to their OWN site,
+    # so each bin is compared against desert from the same neighbourhood --
+    # a like-for-like comparison rather than one global control pool.
+    ctl = controls[controls["paired_site_id"].isin(flares["site_id"])]
     ctl = ctl.groupby("paired_site_id", group_keys=False).head(2)
+    ctl = ctl.merge(
+        flares[["site_id", "size_bin"]].rename(columns={"site_id": "paired_site_id"}),
+        on="paired_site_id", how="left",
+    )
 
     pts = pd.concat([
-        top.rename(columns={"site_id": "point_id"}).assign(kind="flare"),
-        ctl.rename(columns={"control_id": "point_id"})[["point_id", "lat", "lon"]].assign(
-            kind="control", volume_mcm=np.nan
-        ),
+        flares.rename(columns={"site_id": "point_id"}).assign(kind="flare"),
+        ctl.rename(columns={"control_id": "point_id"})[
+            ["point_id", "lat", "lon", "size_bin"]
+        ].assign(kind="control"),
     ], ignore_index=True)
 
     print("=" * 74)
-    print(f"SENTINEL-2 SANITY CHECK -- do the biggest flares glow in SWIR? ({year})")
+    print(f"SENTINEL-2 DETECTION CURVE -- separation by flare size ({year})")
     print("=" * 74)
-    print(f"points: {int((pts.kind=='flare').sum())} flares (largest in catalogue) "
+    print(flares.groupby("size_bin", observed=False).agg(
+        n=("site_id", "size"),
+        min_m3h=("m3_per_h", "min"),
+        max_m3h=("m3_per_h", "max"),
+    ).round(1).to_string())
+    print()
+    print(f"total points: {int((pts.kind=='flare').sum())} flares "
           f"+ {int((pts.kind=='control').sum())} paired controls")
-    print(f"volume range of the flares: {top.volume_mcm.min():,.0f} - {top.volume_mcm.max():,.0f} Mm3/yr\n")
 
-    cache = proc / f"s2_sanity_{year}.parquet"
+    cache = proc / f"s2_bins_{year}.parquet"
     if cache.exists():
-        print(f"using cached {cache.name} (delete it to re-pull from Earth Engine)")
+        print()
+        print(f"using cached {cache.name} (delete to re-pull from Earth Engine)")
         obs = pd.read_parquet(cache)
     else:
+        print()
         obs = monthly_swir(pts, year, cfg)
         obs.to_parquet(cache, index=False)
-        print(f"\nwrote {cache}")
+        print(f"wrote {cache}")
 
-    df = obs.merge(pts[["point_id", "kind"]], on="point_id", how="left")
+    df = obs.merge(pts[["point_id", "kind", "size_bin"]], on="point_id", how="left")
     df = df[df["B12_max"].notna()].copy()
-
-    # THE STATISTIC MATTERS MORE THAN THE DATA HERE.
-    #
-    # A first version of this check compared the POOLED MEDIAN of raw bands
-    # and reported PASS on a 3.3x B12 difference. That was wrong, and wrong in
-    # the most dangerous direction -- it would have licensed the whole
-    # Sentinel-2 arm on a false premise. Flare sites came out ~3x brighter
-    # than controls in ALL THREE bands about equally, and the B12/B8A ratio
-    # was actually LOWER at flares (1.007) than at controls (1.024). Uniform
-    # brightness across NIR and SWIR is not a thermal signature; it is what
-    # industrial infrastructure looks like -- metal tanks, concrete, roads.
-    # That test would have passed on a car park.
-    #
-    # Two corrections:
-    #   1. Judge on the SPECTRAL RATIO B12/B8A, not raw brightness. Flames are
-    #      disproportionately bright at 2190 nm; sunlit sand and steel are
-    #      bright everywhere.
-    #   2. Take the MAX across months per site, not the median. Flares are
-    #      intermittent -- median detection frequency in this catalogue is
-    #      0.077 -- so most monthly composites catch the site unlit and the
-    #      median averages the signal away. The lit pass is the informative
-    #      one. This is the same reasoning as the max-not-median composite:
-    #      variance across passes IS the signal.
     df["b12_b8a"] = df["B12_max"] / df["B8A_max"].replace(0, np.nan)
-    df["swir_index"] = (df["B12_max"] - df["B11_max"]) / (df["B12_max"] + df["B11_max"])
 
+    # Per SITE max across months, not the median: flares are intermittent
+    # (median detection_freq 0.077), so most monthly composites catch the site
+    # unlit and a median averages the signal away. The lit pass is the
+    # informative one.
     per_site = (
-        df.groupby(["point_id", "kind"])
-        .agg(b12_b8a_max=("b12_b8a", "max"), b12_max=("B12_max", "max"))
-        .reset_index()
+        df.groupby(["point_id", "kind", "size_bin"], observed=False)["b12_b8a"]
+        .max().reset_index().dropna(subset=["b12_b8a"])
     )
 
-    print()
-    print("-" * 74)
-    print("RESULT")
-    print("-" * 74)
-    print("pooled median of raw bands (the NAIVE view -- do not judge on this):")
-    print(df.groupby("kind")[["B8A_max", "B11_max", "B12_max"]].median().round(1).to_string())
-    print()
-    print("per-site MAX across months of the spectral ratio (the real test):")
-    print(per_site.groupby("kind")[["b12_b8a_max", "b12_max"]].median().round(3).to_string())
-
     thr = float(cfg["data"]["sentinel2"].get("sanity_b12_b8a_min", 1.2))
-    fr = {}
-    for k, s in per_site.groupby("kind"):
-        fr[k] = float((s["b12_b8a_max"] > thr).mean())
-        print(f"  points ever exceeding B12/B8A > {thr}: {k:<8} "
-              f"{int((s['b12_b8a_max'] > thr).sum())}/{len(s)} ({100*fr[k]:.0f}%)")
+    bs = cfg.evaluation["bootstrap"]
+    rng = np.random.default_rng(int(cfg.seeds["bootstrap"]))
+    n_res = int(bs["n_resamples"])
 
-    sat = float((df["B12_max"] >= 10000).mean())
     print()
-    print(f"SATURATION: {100*sat:.1f}% of observations are at or above 10000 "
-          f"(100% reflectance).")
-    print("  S2 was not designed for targets this hot. Saturation compresses the")
-    print("  ratio toward 1 and makes this test CONSERVATIVE -- the true spectral")
-    print("  separation is likely larger than measured. Do not read saturated")
-    print("  radiance as a quantitative flare brightness.")
+    print("" + "-" * 74)
+    print("SEPARATION BY SIZE BIN -- per-site max B12/B8A, and the difference")
+    print(f"in % of points exceeding {thr}, with 95% bootstrap CI (RULE 3)")
+    print("-" * 74)
+    print(f"{'size_bin':<12}{'n_fl':>5}{'n_ct':>5}{'flare':>8}{'ctrl':>8}"
+          f"{'%fl':>6}{'%ct':>6}{'diff pp':>9}{'95% CI':>18}")
 
-    f_med = float(per_site[per_site.kind == "flare"]["b12_b8a_max"].median())
-    c_med = float(per_site[per_site.kind == "control"]["b12_b8a_max"].median())
+    floor = int(cfg.evaluation["confound_control"]["min_sites_per_bin"])
+    for b in per_site["size_bin"].cat.categories:
+        sub = per_site[per_site["size_bin"] == b]
+        f = sub[sub.kind == "flare"]["b12_b8a"].to_numpy()
+        c = sub[sub.kind == "control"]["b12_b8a"].to_numpy()
+        if len(f) == 0 or len(c) == 0:
+            continue
+        ef, ec = (f > thr).astype(float), (c > thr).astype(float)
+        draws = np.array([
+            ef[rng.integers(0, len(ef), len(ef))].mean()
+            - ec[rng.integers(0, len(ec), len(ec))].mean()
+            for _ in range(n_res)
+        ]) * 100
+        lo, hi = np.percentile(draws, 2.5), np.percentile(draws, 97.5)
+        mark = "" if len(f) >= floor else "  (below the 20-site floor)"
+        print(f"{str(b):<12}{len(f):>5}{len(c):>5}{np.median(f):>8.2f}{np.median(c):>8.2f}"
+              f"{100*ef.mean():>6.0f}{100*ec.mean():>6.0f}"
+              f"{100*(ef.mean()-ec.mean()):>9.0f}"
+              f"{f'[{lo:+.0f}, {hi:+.0f}]':>18}{mark}")
+
     print()
-    if f_med > c_med * 1.2 and fr.get("flare", 0) > 2 * fr.get("control", 1):
-        print("  -> PASS, and it validates the project's core premise.")
-        print(f"     Flares reach B12/B8A {f_med:.2f} against {c_med:.2f} for their own")
-        print("     controls, and do so in only SOME months -- which is exactly what")
-        print("     intermittency predicts and why the median hid it. The signal is")
-        print("     in the variation across passes, not in the average level.")
-        print("     Proceed to the full extraction, keeping per-pass values.")
-    else:
-        print("  -> FAIL on the spectral test. Raw brightness alone is NOT evidence:")
-        print("     flare sites contain industrial infrastructure that is bright in")
-        print("     every band. STOP and debug before building features.")
+    print("" + "-" * 74)
+    print("HOW TO READ THIS")
+    print("-" * 74)
+    print("  A CI excluding zero means Sentinel-2 separates flares from their own")
+    print("  desert controls in that size bin. A CI spanning zero means it does")
+    print("  NOT -- and the smallest bin where it still excludes zero is this")
+    print("  method's practical detection limit. That limit is a RESULT: it is")
+    print("  the number defining what the project can honestly claim.")
+    print("  Every n here is small, so read the intervals, not the point values.")
     return 0
 
 
