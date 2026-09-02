@@ -96,6 +96,37 @@ def _init(cfg: Config):
     return ee
 
 
+def _with_retry(fn, what: str, tries: int = 4, base_delay: float = 5.0):
+    """Call fn(), retrying on transient network failures.
+
+    Not defensive padding. Two DNS resolution failures were observed on this
+    machine within an hour -- eogauth.mines.edu and earthengine.googleapis.com
+    -- and one of them killed an extraction mid-run. The full extraction is
+    ~9,400 points over six years and will make thousands of calls over hours;
+    at that length a transient blip is not a possibility but a certainty.
+
+    Retries only network-shaped errors. A genuine Earth Engine error (bad
+    asset, malformed reducer, quota exhausted) is re-raised immediately --
+    retrying those would waste EECU budget hammering a request that cannot
+    succeed.
+    """
+    import time
+
+    transient = ("resolve", "connection", "timed out", "timeout",
+                 "temporarily unavailable", "503", "502", "deadline")
+    for attempt in range(1, tries + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            msg = str(exc).lower()
+            if not any(k in msg for k in transient) or attempt == tries:
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            print(f"      {what}: transient error, retry {attempt}/{tries - 1} "
+                  f"in {delay:.0f}s -- {type(exc).__name__}", flush=True)
+            time.sleep(delay)
+
+
 def monthly_swir(points: pd.DataFrame, year: int, cfg: Config) -> pd.DataFrame:
     """Monthly max SWIR per point for one year.
 
@@ -137,7 +168,7 @@ def monthly_swir(points: pd.DataFrame, year: int, cfg: Config) -> pd.DataFrame:
                 .select(BANDS)
             )
             if n_scenes is None:
-                n_scenes = col.size().getInfo()
+                n_scenes = _with_retry(lambda: col.size().getInfo(), f'{year}-{month:02d} size')
             if n_scenes == 0:
                 break
 
@@ -149,7 +180,9 @@ def monthly_swir(points: pd.DataFrame, year: int, cfg: Config) -> pd.DataFrame:
                 reducer=ee.Reducer.max(),
                 scale=int(s2cfg["native_resolution_m"]),
             )
-            for f in stats.getInfo()["features"]:
+            feats = _with_retry(lambda: stats.getInfo()['features'],
+                                f'{year}-{month:02d} chunk {c0}')
+            for f in feats:
                 pr = f["properties"]
                 month_rows.append({
                     "point_id": pr.get("point_id"),
