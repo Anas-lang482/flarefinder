@@ -39,3 +39,9 @@ desktop.ini
 # produces a ~2 MB diff on every pipeline run. Rebuild it with
 #   python run.py figures
 figures/*.html
+
+# VNF sample data downloaded from the public product page for schema
+# verification. VNF licence 1(b) forbids redistribution in machine-readable
+# form, so raw VNF must never be committed.
+data/raw/viirs/*
+!data/raw/viirs/.gitkeep
