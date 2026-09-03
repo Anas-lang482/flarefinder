@@ -27,7 +27,7 @@ import sys
 STAGES = {
     "check-env": ("src.check_env", "Verify every dependency imports and Earth Engine authenticates."),
     "download": ("src.data_eog", "Fetch EOG catalogue, VIIRS/Black Marble passes, Sentinel-2 scenes."),
-    "vnf": ("src.data_viirs", "Download VIIRS Nightfire per-detection records (needs EOG token)."),
+    "vnf": ("src.data_viirs", "Ingest VIIRS Nightfire files from data/raw/viirs (browser-downloaded)."),
     "join": ("src.build_catalog", "Cluster sites across years into stable ids; build catalog.parquet."),
     "controls": ("src.make_controls", "Generate matched non-flare control points."),
     "s2": ("src.data_s2", "Sentinel-2 SWIR extraction (--sanity for the premise check)."),
