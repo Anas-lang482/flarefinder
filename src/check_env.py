@@ -28,14 +28,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_PACKAGES = [
     ("numpy", "numpy", "numerics"),
     ("pandas", "pandas", "site-year tables"),
-    ("pyarrow", "pyarrow", "parquet in data/processed"),
     ("openpyxl", "openpyxl", "reads the EOG .xlsx catalogue"),
     ("yaml", "pyyaml", "config.yaml loader"),
     ("geopandas", "geopandas", "site geometry"),
     ("shapely", "shapely", "geometry ops"),
     ("pyproj", "pyproj", "projections / metre distances"),
     ("ee", "earthengine-api", "Sentinel-2 SWIR extraction"),
-    ("geemap", "geemap", "GEE convenience"),
     ("boto3", "boto3", "s3://blackmarble-combustion"),
     ("requests", "requests", "EOG downloads"),
     ("tqdm", "tqdm", "download progress"),
@@ -53,6 +51,12 @@ REQUIRED_PACKAGES = [
 # you to ignore the FAIL column, which is the one that matters.
 # (import name, pip name, why it is optional)
 OPTIONAL_PACKAGES = [
+    (
+        "geemap",
+        "geemap",
+        "GEE convenience wrapper -- unused: every Earth Engine call in src/ "
+        "uses the `ee` API directly, so geemap being blocked costs nothing",
+    ),
     (
         "rasterio",
         "rasterio",
@@ -115,13 +119,49 @@ def check_python(report: Report) -> None:
         report.record("SKIP", "virtual environment", "not active -- recommended but not required")
 
 
+def check_parquet_engine(report: Report) -> None:
+    """Parquet needs ONE working engine, not a specific one.
+
+    Requiring pyarrow by name was wrong: Windows Smart App Control blocks its
+    unsigned native DLL on this machine, which would fail the environment
+    check even though fastparquet is installed and pandas falls back to it
+    automatically. What the pipeline actually needs is any engine that can
+    read and write a parquet file, so that is what gets checked.
+    """
+    print()
+    print("Parquet engine (need at least one)")
+    working = []
+    for name in ("pyarrow", "fastparquet"):
+        try:
+            mod = importlib.import_module(name)
+            report.record("PASS", f"{name:<18}", getattr(mod, "__version__", "unknown"))
+            working.append(name)
+        except Exception as exc:
+            why = ("blocked by Smart App Control" if "Application Control" in str(exc)
+                   else type(exc).__name__)
+            report.record("SKIP", f"{name:<18}", f"unavailable ({why})")
+    if not working:
+        report.record("FAIL", "parquet engine", "NEITHER engine available -- the "
+                                                "pipeline cannot read or write its tables")
+    else:
+        report.record("PASS", "parquet engine", f"usable via {', '.join(working)}")
+
+
 def check_packages(report: Report) -> None:
     print("\nPackages")
     for import_name, pip_name, why in REQUIRED_PACKAGES:
         try:
             mod = importlib.import_module(import_name)
         except Exception as exc:  # ImportError, but also DLL errors on Windows
-            report.record("FAIL", f"{pip_name:<18}", f"{type(exc).__name__}: {exc}")
+            msg = f"{type(exc).__name__}: {exc}"
+            # Windows Smart App Control blocks unsigned native DLLs based on a
+            # cloud reputation lookup, so the SAME package can import fine one
+            # run and fail the next. Say so, or this looks like a broken
+            # install and someone reinstalls packages that were never broken.
+            if "Application Control" in str(exc):
+                msg = ("BLOCKED by Windows Smart App Control (not a broken "
+                       "install; this failure is intermittent) -- " + msg)
+            report.record("FAIL", f"{pip_name:<18}", msg)
             continue
         version = getattr(mod, "__version__", "unknown")
         report.record("PASS", f"{pip_name:<18}", f"{version}  ({why})")
@@ -241,6 +281,7 @@ def main(config_path: str = "config.yaml") -> int:
     report = Report()
     check_python(report)
     check_packages(report)
+    check_parquet_engine(report)
     check_optional_packages(report)
     check_dirs(report)
     cfg = check_config(report, config_path)

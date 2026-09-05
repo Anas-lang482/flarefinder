@@ -10,6 +10,12 @@
 numpy>=1.26
 pandas>=2.2
 pyarrow>=15.0          # parquet engine for data/processed
+fastparquet>=2024.2    # SECOND parquet engine, deliberately. Windows
+                       # Smart App Control blocks pyarrow's unsigned
+                       # native DLL on this machine, which stops every
+                       # read and write in the pipeline. fastparquet is
+                       # a different binary and is not blocked; pandas
+                       # falls back to it automatically.
 openpyxl>=3.1          # .xlsx engine -- the EOG annual flare catalogue,
                        # our ground truth, ships as Excel workbooks
 pyyaml>=6.0            # config.yaml loader

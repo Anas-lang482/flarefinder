@@ -138,7 +138,15 @@ data:
     # /wwwdata/viirs_products/vnf/ returns 302 to eogauth.mines.edu, so this
     # source needs a bearer token -- unlike the annual workbooks, which are
     # public direct links.
-    access_method: eog_vnf
+    # SUPERSEDED 2026-09-03: the token route does not work for academic
+    # licensees. EOG's registration page states that since 2026-06-01
+    # programmatic access via OpenID client is limited to PAID
+    # subscribers, with client_id/client_secret issued after payment.
+    # The client named in older docs (eogdata_oidc) returns
+    # invalid_client on both eogauth.mines.edu and eogauth-new.
+    # A licence grants the DATA, not the API. Files are downloaded
+    # through the browser into data/raw/viirs and parsed locally.
+    access_method: local_files
     vnf_base_url: https://eogdata.mines.edu/wwwdata/viirs_products/vnf
     vnf_version: v30              # [CALIBRATE] v40/v35/v30/v21 all exist.
                                   # Confirm against one REAL file before a
@@ -166,6 +174,21 @@ data:
     bands: [B8A, B11, B12]
     band_wavelengths_nm: {B8A: 865, B11: 1610, B12: 2190}
     native_resolution_m: 20
+    ee_chunk_points: 200          # [CHOICE] points per getInfo. Earth
+                                  # Engine DROPS oversized synchronous
+                                  # payloads silently rather than
+                                  # raising, so a large call looks like
+                                  # success while writing nothing.
+    sanity_sites_per_bin: 40      # [CHOICE] must exceed the 20-site
+                                  # floor in evaluation.confound_control,
+                                  # or every bin is underpowered and the
+                                  # intervals cannot decide anything
+    sanity_b12_b8a_min: 1.2       # [CHOICE] SWIR excess that counts as a
+                                  # thermal signature in the premise check
+    buffer_m: 100                 # [CHOICE] radius sampled around each
+                                  # point. Wider dilutes a sub-pixel
+                                  # flare; narrower risks missing it if
+                                  # the coordinate is a little off.
     max_cloud_pct: 60             # [CHOICE] permissive: flares are point-like
                                   # and survive partial cloud. Tighten if the
                                   # false-positive rate demands it.
@@ -223,6 +246,25 @@ thresholds:
                                        # diagnostic and sweep it: too large
                                        # fuses neighbouring flares, too small
                                        # splits one flare into several ids.
+
+# ---------------------------------------------------------------------------
+# CONTROL POINTS (the detector's negatives)
+# Controls must share terrain, climate and land cover with the real sites.
+# Negatives drawn from elsewhere would make the task trivially easy and the
+# measured performance meaningless.
+# ---------------------------------------------------------------------------
+controls:
+  per_site: 3                        # [CHOICE] 3:1 negative:positive ratio
+  min_distance_m: 5000               # [CHOICE] far enough that a 20 m S2
+                                     # pixel cannot catch the flare itself
+  max_distance_m: 15000              # [CHOICE] close enough to share terrain
+  min_distance_to_any_flare_m: 2000  # [CHOICE] from ANY flare, ANY YEAR --
+                                     # a site that flared in 2015 and went
+                                     # quiet is still not a clean negative
+  require_onshore: true              # water is cold and dark in SWIR, so sea
+                                     # controls are trivially separable and
+                                     # would flatter the detector
+  ee_chunk_size: 2000                # points per Earth Engine getInfo call
 
 # ---------------------------------------------------------------------------
 # EVALUATION (RULES 1, 2, 3)

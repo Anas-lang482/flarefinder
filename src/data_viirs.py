@@ -71,16 +71,38 @@ EARTH_RADIUS_M = 6_371_000.0
 # Columns we care about, matched case-insensitively -- the VNF schema has
 # drifted across versions exactly as the annual workbooks did, so nothing is
 # matched by exact name.
+# Verified against the real v3.0 schema on 2026-09-03, using the sample file
+# and README that EOG publishes publicly on the VNF product page. Matched
+# case-insensitively because the schema varies across VNF versions.
 WANTED = {
     "lat": ["lat_gmtco", "latitude", "lat"],
     "lon": ["lon_gmtco", "longitude", "lon"],
-    "radiant_heat": ["rh", "radiant_heat", "rhi"],
-    "temp_bb": ["temp_bb", "temperature_bb", "temp"],
-    "area_bb": ["area_bb", "source_area", "area"],
-    "esf_bb": ["esf_bb"],
-    "cloud_mask": ["cloud_mask", "cm"],
+    "site_key": ["id_key"],          # EOG unique IR-source id
     "datetime": ["date_ltz", "date_mscan", "datetime", "date"],
+    "temp_bb": ["temp_bb"],          # source temperature, Kelvin
+    "temp_bkg": ["temp_bkg"],        # Earth background temperature
+    "esf_bb": ["esf_bb"],            # emission scaling factor
+    "radiant_heat": ["rh"],          # RADIANT HEAT -- the reason for the licence
+    "rhi": ["rhi"],                  # radiant heat intensity
+    "area_bb": ["area_bb"],          # source area
+    "area_pixel": ["area_pixel"],
+    "methane_eq": ["methane_eq"],    # EOG computes these per detection --
+    "co2_eq": ["co2_eq"],            # directly useful for the CO2e multiplier
+    "cloud_mask": ["cloud_mask", "cm"],
+    "qf_fit": ["qf_fit"],            # Planck-fit quality bitfield
+    "qf_detect": ["qf_detect"],      # detection-method bitfield
 }
+
+# The VNF fill value. README v3.0 lists 999999 as the Fill Value for
+# Lat_GMTCO, Lon_GMTCO, Temp_BB, Temp_Bkg, ESF_BB, RHI, RH and others.
+# Left unconverted it is catastrophic: a median radiant heat computed over
+# a column where most rows are 999999 returns 999999 and looks like a real
+# number. Every numeric column is masked on read.
+FILL_VALUE = 999999
+
+# QF_Fit bits meaning the Planck fit hit a boundary, so the temperature is
+# not trustworthy: 8 = Max Temp Fit, 16 = Min Temp Fit.
+QF_FIT_BOUNDARY_BITS = 8 | 16
 
 
 def token_help() -> str:
@@ -188,8 +210,13 @@ def fetch_night(day: date, cfg: Config, token: str, raw_dir: Path) -> Path | Non
 
 
 def read_night(path: Path, bbox: tuple[float, float, float, float]) -> pd.DataFrame:
-    """Read one nightly file and keep only rows inside the study bbox."""
-    with gzip.open(path, "rb") as fh:
+    """Read one VNF file, mask fill values, keep rows inside the study bbox.
+
+    Handles .csv and .csv.gz. Column matching is case-insensitive because the
+    schema differs across VNF versions.
+    """
+    opener = gzip.open if path.suffix.lower() == ".gz" else open
+    with opener(path, "rb") as fh:
         df = pd.read_csv(io.BytesIO(fh.read()), low_memory=False)
 
     lower = {str(c).strip().lower(): c for c in df.columns}
@@ -203,12 +230,32 @@ def read_night(path: Path, bbox: tuple[float, float, float, float]) -> pd.DataFr
         raise ValueError(f"no lat/lon column in {path.name}: {list(df.columns)[:15]}")
 
     out = pd.DataFrame({k: df[v] for k, v in cols.items()})
+
+    # Mask the fill value BEFORE anything else touches these numbers.
+    # 999999 is a real float that survives every downstream operation
+    # silently: a median over a mostly-unfitted column returns 999999 and
+    # reads as a plausible radiant heat. This is the single most dangerous
+    # line in the module.
+    numeric = [c for c in out.columns if c not in ("site_key", "datetime")]
+    for c in numeric:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+        out.loc[out[c] == FILL_VALUE, c] = pd.NA
+
     lon_min, lat_min, lon_max, lat_max = bbox
-    m = (
-        out["lat"].between(lat_min, lat_max)
-        & out["lon"].between(lon_min, lon_max)
-    )
-    out = out[m].copy()
+    out = out[
+        out["lat"].between(lat_min, lat_max) & out["lon"].between(lon_min, lon_max)
+    ].copy()
+
+    # Flag boundary-limited Planck fits. Temperature and everything derived
+    # from it (radiant heat, area) are unreliable where the fit was clipped
+    # at the allowed min or max, so mark them rather than dropping them --
+    # whether to exclude is an analysis decision, not a parsing one.
+    if "qf_fit" in out.columns:
+        qf = pd.to_numeric(out["qf_fit"], errors="coerce").fillna(0).astype("int64")
+        out["fit_at_boundary"] = (qf & QF_FIT_BOUNDARY_BITS) > 0
+    else:
+        out["fit_at_boundary"] = False
+
     out["source_file"] = path.name
     return out
 
@@ -255,59 +302,86 @@ def match_to_sites(det: pd.DataFrame, catalog: pd.DataFrame, radius_m: float) ->
     return det
 
 
+def ingest_local(cfg: Config, raw_dir: Path) -> pd.DataFrame:
+    """Parse VNF files already on disk.
+
+    THE PRIMARY PATH, not a fallback. Verified 2026-09-03 on EOG's own
+    registration page: since 2026-06-01 programmatic access via OpenID client
+    is restricted to PAID subscribers, and the client_id/client_secret are
+    issued by EOG after payment. The public client that older documentation
+    named (eogdata_oidc) returns invalid_client on both auth hosts.
+
+    An academic data licence therefore grants the DATA but not the API. Files
+    downloaded through the browser while logged in are the supported route,
+    and this function is what turns them into the project's table.
+
+    Drop any VNF nightly file into data/raw/viirs/ -- .csv or .csv.gz, any
+    naming -- and run `python run.py vnf`.
+    """
+    # Deduplicate by resolved path. Windows globbing is case-INSENSITIVE, so
+    # "*.csv.gz" and "*.CSV.GZ" both match the same file and the naive
+    # concatenation parsed every file twice -- which doubled the detection
+    # count and would have doubled every downstream statistic while looking
+    # entirely plausible.
+    patterns = ("*.csv.gz", "*.csv", "*.CSV.GZ", "*.CSV")
+    seen, files = set(), []
+    for pat in patterns:
+        for f in sorted(raw_dir.glob(pat)):
+            key = str(f.resolve()).lower()
+            if key not in seen:
+                seen.add(key)
+                files.append(f)
+    files.sort()
+    if not files:
+        return pd.DataFrame()
+
+    bbox = region_bbox(cfg)
+    frames = []
+    for f in files:
+        try:
+            part = read_night(f, bbox)
+        except Exception as exc:
+            print(f"  SKIPPED {f.name}: {type(exc).__name__}: {str(exc)[:90]}")
+            continue
+        frames.append(part)
+        print(f"  parsed {f.name:<52} {len(part):>7} rows in study bbox")
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
 def main(config_path: str = "config.yaml", probe: bool = False) -> int:
     cfg = load_config(config_path)
     raw_dir = cfg.path(cfg["data"]["raw_dir"], cfg["data"]["viirs"]["raw_subdir"])
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    token = load_token()
     print("=" * 74)
-    print("VNF NIGHTTIME INGEST" + ("  (probe)" if probe else ""))
+    print("VNF NIGHTTIME INGEST")
     print("=" * 74)
-    if not token:
-        print(token_help())
-        return 1
-    print(f"token       : present ({len(token)} chars)")
-    print(f"cache dir   : {raw_dir}")
+    print(f"looking for local VNF files in : {raw_dir}")
 
-    bbox = region_bbox(cfg)
-    print(f"study bbox  : {[round(b, 2) for b in bbox]}")
+    det = ingest_local(cfg, raw_dir)
 
-    vcfg = cfg["data"]["viirs"]
-    if probe:
-        days = [date.fromisoformat(vcfg.get("probe_date", "2024-01-15"))]
-    else:
-        start = date.fromisoformat(str(vcfg["start_date"]))
-        end = date.fromisoformat(str(vcfg["end_date"]))
-        days = [start + timedelta(d) for d in range((end - start).days + 1)]
-    print(f"nights      : {len(days)} ({days[0]} .. {days[-1]})\n")
-
-    frames, missing = [], 0
-    for day in days:
-        try:
-            p = fetch_night(day, cfg, token, raw_dir)
-        except PermissionError as e:
-            print(f"\nFAILED: {e}")
-            return 1
-        if p is None:
-            missing += 1
-            if probe:
-                print(f"    {day} NOT FOUND at any candidate URL")
-            continue
-        frames.append(read_night(p, bbox))
-
-    if not frames:
-        print(
-            f"\nNo data retrieved ({missing} nights not found).\n"
-            "The URL pattern is probably wrong for your VNF version. Log in at\n"
-            "https://eogdata.mines.edu/products/vnf/ , copy the real path of one\n"
-            "nightly file, and set data.viirs.vnf_base_url / vnf_version in\n"
-            "config.yaml to match. Do NOT guess -- verify one real file first."
-        )
+    if det.empty:
+        print()
+        print("No VNF files found on disk, and no usable API route.")
+        print()
+        print("EOG restricted programmatic access to PAID subscribers on")
+        print("2026-06-01; client credentials are issued after payment. An")
+        print("academic licence covers the data, not the API, so the supported")
+        print("route is a browser download:")
+        print()
+        print("  1. Log in at https://eogdata.mines.edu/products/vnf/")
+        print("  2. Open the nightly VNF directory for the dates you want")
+        print("  3. Save the .csv.gz files into:")
+        print(f"       {raw_dir}")
+        print("  4. Re-run: python run.py vnf")
+        print()
+        print("Start with ONE night and check the output before downloading")
+        print("more -- the schema needs to match before bulk collection is")
+        print("worth the effort.")
         return 1
 
-    det = pd.concat(frames, ignore_index=True)
-    print(f"\ndetections in study bbox : {len(det)}  ({missing} nights unavailable)")
+    print()
+    print(f"detections in study bbox : {len(det)}")
 
     cat_path = cfg.path(cfg["data"]["processed_dir"], "catalog.parquet")
     if cat_path.exists():
@@ -321,17 +395,22 @@ def main(config_path: str = "config.yaml", probe: bool = False) -> int:
     if "radiant_heat" in det.columns:
         rh = pd.to_numeric(det["radiant_heat"], errors="coerce").dropna()
         if len(rh):
-            print(f"\nradiant heat (MW)        : median {rh.median():.3f}  max {rh.max():.1f}")
-            print("  ^ this column is what makes the RULE 6 baseline reproducible")
+            print()
+            print(f"radiant heat (MW)        : median {rh.median():.3f}  max {rh.max():.1f}")
+            print("  ^ the column absent from the public workbooks. This is what")
+            print("    makes the RULE 6 baseline reproducible.")
+        else:
+            print()
+            print("  !! radiant_heat column found but entirely empty -- check the")
+            print("     column mapping in WANTED against this file's header.")
+    else:
+        print()
+        print("  !! NO radiant_heat column matched. Send me the file's header row;")
+        print("     the VNF schema varies by version and WANTED needs remapping.")
 
     out = cfg.path(cfg["data"]["processed_dir"]) / "vnf_detections.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)
     det.to_parquet(out, index=False)
-    print(f"\nwrote {out}  rows={len(det)}")
+    print()
+    print(f"wrote {out}  rows={len(det)}")
     return 0
-
-
-if __name__ == "__main__":
-    import sys
-
-    raise SystemExit(main(probe="--probe" in sys.argv))
